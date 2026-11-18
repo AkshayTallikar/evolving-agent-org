@@ -1,0 +1,17 @@
+{
+  "roles": [
+    {
+      "name": "coder",
+      "kind": "coder",
+      "instructions": [
+        "Write a correct Python function."
+      ],
+      "model": "small"
+    }
+  ],
+  "max_retries": 1,
+  "parent_ids": [],
+  "generation": 0,
+  "mutation_note": "",
+  "genome_id": "ed5cc38bd2"
+}
