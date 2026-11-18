@@ -374,6 +374,35 @@ each mutation's rationale, and the held-out comparison of seed vs champion.
 writes `DIR/run.json` and `DIR/report.md` and prints the report. `evorg show DIR` prints a
 saved report. `evorg bench GENOME.json [--split holdout]` evaluates one genome.
 
+### 4.10 `evorg.pareto`
+
+Pure ranking of genomes on two objectives: maximise `pass_rate`, minimise `mean_cost_usd`.
+It does not change the evolution loop; wiring it into selection is a later step.
+
+```python
+@dataclass(frozen=True)
+class Point:
+    key: str            # genome id
+    pass_rate: float
+    cost: float
+
+def dominates(a: Point, b: Point) -> bool        # >= on both, > on at least one
+def non_dominated_fronts(points) -> list[list[Point]]   # front 0 first
+def crowding_distance(front) -> dict[str, float]         # per key; inf for boundary points
+def pareto_rank(points) -> dict[str, tuple[int, float]]  # key -> (front index, crowding)
+def pareto_sort_key(rank, key) -> tuple[int, float, str] # best first
+def frontier(points) -> list[Point]                      # front 0, by cost then key
+def points_from_evaluations(evaluations: Mapping[str, Evaluation]) -> list[Point]
+```
+
+Rules: identical objective values do not dominate each other and share a front. Front `k`
+is the set of points whose dominators all lie in fronts before `k`. Crowding distance is
+normalised per objective by the front's range; boundary points get `inf`; an objective with
+range 0 adds nothing; fronts of one or two points give `inf` to every point. Ties break on
+`key`. Duplicate keys raise `ValueError`. Output does not depend on input order. The sort key
+puts the lower front first, then the larger crowding distance, then the smaller key.
+`points_from_evaluations` uses the mapping key as the point key.
+
 ## 5. Testing strategy
 
 * Unit tests per module, no network, no API key.
