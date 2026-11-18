@@ -184,5 +184,3 @@ Python 3.11, 3.12 and 3.13. See the
 
 - [#10](https://github.com/AkshayTallikar/evolving-agent-org/issues/10) Evolve on real models
 - [#12](https://github.com/AkshayTallikar/evolving-agent-org/issues/12) Pareto selection on pass rate and cost
-- [#11](https://github.com/AkshayTallikar/evolving-agent-org/issues/11) Crossover between organizations
-- [#13](https://github.com/AkshayTallikar/evolving-agent-org/issues/13) Parallel evaluation
