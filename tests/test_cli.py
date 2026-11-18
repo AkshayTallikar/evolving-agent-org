@@ -97,3 +97,54 @@ def test_bad_command_exits_with_usage_error(argv):
     with pytest.raises(SystemExit) as exc:
         main(argv)
     assert exc.value.code == 2
+
+
+def test_eval_seeds_flag_is_recorded_in_run_json(tmp_path):
+    out = tmp_path / "multi"
+    code = main(
+        [
+            "run",
+            "--generations",
+            "1",
+            "--population",
+            "3",
+            "--eval-seeds",
+            "2",
+            "--out",
+            str(out),
+        ]
+    )
+    assert code == 0
+    data = json.loads((out / "run.json").read_text())
+    assert data["config"]["eval_seeds"] == 2
+    assert "scored over 2 simulator seeds" in (out / "report.md").read_text()
+
+
+def test_eval_seeds_defaults_to_one(tmp_path):
+    out = _run_tiny(tmp_path)
+    data = json.loads((out / "run.json").read_text())
+    assert data["config"]["eval_seeds"] == 1
+    assert "simulator seeds" not in (out / "report.md").read_text().splitlines()[2]
+
+
+def test_anthropic_with_several_eval_seeds_returns_2(tmp_path, monkeypatch, capsys):
+    def fail(*args, **kwargs):
+        raise AssertionError("make_backend must not be called for eval_seeds > 1")
+
+    monkeypatch.setattr(cli, "make_backend", fail)
+    code = main(
+        [
+            "run",
+            "--backend",
+            "anthropic",
+            "--yes",
+            "--eval-seeds",
+            "2",
+            "--out",
+            str(tmp_path / "a"),
+        ]
+    )
+
+    assert code == 2
+    assert "--eval-seeds" in capsys.readouterr().err
+    assert not (tmp_path / "a").exists()

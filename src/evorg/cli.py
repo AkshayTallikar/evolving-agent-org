@@ -40,6 +40,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--population", type=int, default=default_config.population)
     run.add_argument("--seed", type=int, default=default_config.seed)
     run.add_argument("--cost-weight", type=float, default=default_config.cost_weight)
+    run.add_argument(
+        "--eval-seeds",
+        type=int,
+        default=default_config.eval_seeds,
+        help="simulator seeds each genome is scored on (sim backend only)",
+    )
     run.add_argument("--out", help="output directory (default: runs/<backend>-seed<seed>)")
     run.add_argument(
         "--yes", action="store_true", help="confirm a run that calls the paid Anthropic API"
@@ -78,8 +84,17 @@ def _cmd_run(args: argparse.Namespace) -> int:
         generations=args.generations,
         seed=args.seed,
         cost_weight=args.cost_weight,
+        eval_seeds=args.eval_seeds,
     )
     out = Path(args.out) if args.out else Path("runs") / f"{args.backend}-seed{args.seed}"
+
+    if args.backend == "anthropic" and args.eval_seeds > 1:
+        print(
+            "error: --eval-seeds above 1 needs the simulated backend; repeating paid "
+            "Anthropic calls would multiply the cost",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
 
     try:
         if args.backend == "anthropic":

@@ -41,13 +41,14 @@ def render_markdown(run: RunResult) -> str:
     champion_ev = run.evaluations[run.champion_id]
     seed = run.genomes[run.seed_id]
 
+    seeds_note = f"scored over {cfg.eval_seeds} simulator seeds, " if cfg.eval_seeds > 1 else ""
     lines: list[str] = [
         "# evorg run",
         "",
         (
             f"Backend {run.backend}, seed {cfg.seed}, population {cfg.population}, "
-            f"generations {cfg.generations}, {len(run.evaluations)} genomes evaluated, "
-            f"architect proposals valid {valid}/proposed {proposed}."
+            f"generations {cfg.generations}, {seeds_note}{len(run.evaluations)} genomes "
+            f"evaluated, architect proposals valid {valid}/proposed {proposed}."
         ),
         "",
         "## Fitness by generation",
@@ -106,6 +107,7 @@ def render_markdown(run: RunResult) -> str:
     lines += ["", "Held-out tasks were never used for selection.", ""]
 
     if run.backend == "sim":
+        lines += ["Held-out tasks were scored on simulator seeds that selection never saw.", ""]
         lines += [SIM_NOTE, ""]
     return "\n".join(lines)
 
