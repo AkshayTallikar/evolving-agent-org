@@ -152,7 +152,12 @@ scoring seed, part of the in-run score is luck, because selection fits that seed
 Averaging each genome over three simulator seeds (`--eval-seeds 3`) cuts that gap and gives
 champions that hold up better on unseen noise, at three times the evaluation cost.
 
-Crossover (`--crossover-rate`, off by default) does not help held-out yet. Over 10 seeds at population 8 and 8 generations ([scripts/compare_crossover.py](scripts/compare_crossover.py)), rate 0.3 lifts training pass rate from 88.8% to 100% and the champion's held-out pass rate stays at 60.0% (3 seeds higher, 2 lower, on only four held-out tasks), while doubling the genomes evaluated (33 against 17).
+Crossover (`--crossover-rate`, off by default) fixes a stall but doesn't help held-out tasks
+yet. Over 10 seeds at population 8, mutation-only search stops finding new organizations
+after about 18 distinct genomes. Running it for 24 generations instead of 8 still ends at
+91.2% train. With crossover at rate 0.3, the same 8 generations explore 33 genomes and reach
+100% train. Held-out pass rate stays at 60.0% either way, though four held-out tasks is too
+few to see small differences ([scripts/compare_crossover.py](scripts/compare_crossover.py)).
 
 Other patterns across seeds: champions almost always add a tester or reviewer and an
 edge-case instruction. Neutral instructions like "keep functions under 30 lines" drift along
