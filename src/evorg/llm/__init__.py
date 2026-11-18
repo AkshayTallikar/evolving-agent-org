@@ -12,12 +12,16 @@ from evorg.llm.base import (
     count_tokens_approx,
     estimate_cost,
 )
+from evorg.llm.budget import BudgetedBackend, BudgetExceeded, CountingBackend
 from evorg.llm.simulated import SimulatedBackend
 
 __all__ = [
     "MODEL_IDS",
     "PRICING_PER_MTOK",
     "AnthropicBackend",
+    "BudgetExceeded",
+    "BudgetedBackend",
+    "CountingBackend",
     "LLMBackend",
     "LLMRequest",
     "LLMResponse",

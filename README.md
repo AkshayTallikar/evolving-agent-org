@@ -93,11 +93,13 @@ evorg serve --runs-dir runs      # then open http://127.0.0.1:8000
 ```
 
 To evolve with real Claude models (small tier is Haiku, large tier is Opus), install the extra
-and set `ANTHROPIC_API_KEY`. This spends money, so the command refuses to start without `--yes`:
+and set `ANTHROPIC_API_KEY`. This spends money, so the command refuses to start without `--yes`
+and a `--max-usd` cap. The cap is enforced before every call, architect included. Estimate first:
 
 ```bash
 pip install -e ".[anthropic]"
-evorg run --backend anthropic --generations 3 --population 4 --yes
+evorg estimate --generations 3 --population 4
+evorg run --backend anthropic --generations 3 --population 4 --max-usd 5 --yes
 ```
 
 ## Demo

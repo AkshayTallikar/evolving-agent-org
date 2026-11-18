@@ -454,6 +454,19 @@ directory name (no `/`, no `..`, no leading dot), and a resolved path that leave
 It binds to localhost by default. Without the extra it prints the install command to stderr
 and exits 2.
 
+### 4.12 Spending cap
+
+`evorg/llm/budget.py`. `BudgetedBackend(inner, limit_usd)` wraps any backend. Before each call
+it reserves the worst-case cost: `estimate_cost(model, ceil(1.5 * approx input tokens),
+MAX_TOKENS)`. The call is refused with `BudgetExceeded` when committed spend, open
+reservations and the new reservation together would exceed the cap, and the inner backend is
+not called. After the call the reservation becomes the actual `cost_usd`. A failed call is
+charged its worst case, since a refused or timed-out request may still be billed. A lock
+guards the check and the reservation, so threads cannot overshoot together.
+`evorg run --backend anthropic` requires `--max-usd`, and the evaluator and the architect
+share one budgeted backend. `evorg estimate` runs the simulator through
+`CountingBackend` and prices the call counts at worst-case output and 1.5x input.
+
 ## 5. Testing strategy
 
 * Unit tests per module, no network, no API key.
