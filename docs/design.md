@@ -374,6 +374,23 @@ each mutation's rationale, and the held-out comparison of seed vs champion.
 writes `DIR/run.json` and `DIR/report.md` and prints the report. `evorg show DIR` prints a
 saved report. `evorg bench GENOME.json [--split holdout]` evaluates one genome.
 
+### 4.9 `evorg.crossover`
+
+`crossover(a, b, rng) -> OrgGenome` is role-aligned uniform crossover. Roles are matched by
+kind slot: coder, first and second planner (in each parent's role order), tester, reviewer.
+For each slot present in either parent, a fair coin picks the parent whose role is used. If
+that parent lacks the slot, the child lacks it too; the coder slot is always present. The
+coder's instructions are mixed: the chosen parent's list first, then each instruction of the
+other coder not yet present is kept with probability 0.5, up to `MAX_INSTRUCTIONS`. The retry
+budget comes from one parent at random. Child roles are ordered planners first, then the
+rest in their parent's order, so crossing a genome with itself returns the same roles.
+Duplicate names are renamed with the lowest free suffix (`tester2`, `tester3`, ...).
+
+Lineage: `parent_ids=(a.genome_id, b.genome_id)`, `generation=max(a, b) + 1`,
+`mutation_note="crossover of <a> x <b>"`. The child is validated. If validation fails, the
+result is a copy of `a` with the same lineage fields. Both parents must be valid. The same
+rng state always gives the same child. Wiring into the evolution loop is a later change.
+
 ### 4.10 `evorg.pareto`
 
 Pure ranking of genomes on two objectives: maximise `pass_rate`, minimise `mean_cost_usd`.
