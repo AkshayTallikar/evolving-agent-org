@@ -372,6 +372,15 @@ organizations behave identically); the next population is the `elite` best plus 
 winners from the rest of parents and children, without duplicates. Ties break on lower cost,
 then `genome_id`, so runs are reproducible.
 
+**Parallel evaluation.** `config.workers` (default 1, CLI `--workers N`) sets how many tasks
+run at once on a `ThreadPoolExecutor`: `evaluate` runs one genome's tasks, and `evaluate_many`
+runs the whole backend x task grid on one pool. Threads suit this work because grading runs in
+a subprocess and API calls are I/O, and both release the GIL. Results come back in task order,
+so an Evaluation is equal to the serial one. The guarantee holds because `SimulatedBackend` is
+a pure function of its seed and the request, `run_task` keeps its bookkeeping per call, and
+the grader writes no shared files. The architect stays serial, and `workers` is left out of
+`run.json`, so runs are byte-identical for any worker count.
+
 ### 4.8 `evorg.report` and `evorg.cli`
 
 `report.render_markdown(run: RunResult) -> str`: fitness per generation (table and a unicode
