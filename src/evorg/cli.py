@@ -195,6 +195,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
         return EXIT_CAP
     except (ValueError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
+        if budget is not None:
+            print(f"spent up to ${budget.spent_usd:.4f} before the error", file=sys.stderr)
         return EXIT_ERROR
 
     out.mkdir(parents=True, exist_ok=True)

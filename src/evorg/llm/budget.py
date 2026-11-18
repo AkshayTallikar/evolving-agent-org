@@ -53,7 +53,8 @@ class BudgetedBackend:
     ``BudgetExceeded`` (and the inner backend is not touched) when the committed spend plus
     open reservations plus this reservation would exceed the limit. After a successful call
     the reservation is replaced by the actual ``cost_usd``. If the inner call raises, the
-    reservation is released and nothing is charged.
+    worst case is charged: a refused or timed-out request may still have been billed, and
+    the cap must never under-count.
     """
 
     def __init__(self, inner: LLMBackend, limit_usd: float) -> None:
@@ -91,7 +92,7 @@ class BudgetedBackend:
         try:
             response = self.inner.complete(request)
         except BaseException:
-            self._release(worst)
+            self._settle(worst, worst, completed=False)
             raise
         self._settle(worst, float(response.cost_usd))
         return response
@@ -102,15 +103,12 @@ class BudgetedBackend:
                 raise BudgetExceeded(self._spent, self._limit)
             self._reserved += worst
 
-    def _release(self, worst: float) -> None:
-        with self._lock:
-            self._reserved -= worst
-
-    def _settle(self, worst: float, actual: float) -> None:
+    def _settle(self, worst: float, actual: float, completed: bool = True) -> None:
         with self._lock:
             self._reserved -= worst
             self._spent += actual
-            self._calls += 1
+            if completed:
+                self._calls += 1
 
 
 @dataclass

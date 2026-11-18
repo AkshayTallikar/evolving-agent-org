@@ -78,17 +78,19 @@ def test_spend_accumulates_actual_costs():
     assert budget.name == "fake"
 
 
-def test_reservation_is_released_when_the_inner_call_raises():
+def test_a_failed_call_is_charged_its_worst_case():
+    # A refused or timed-out request may still be billed, so the cap assumes it was.
     worst = worst_case_cost(_request())
     inner = FakeInner(error=RuntimeError("network down"))
-    budget = BudgetedBackend(inner, limit_usd=worst * 1.5)  # room for exactly one reservation
+    budget = BudgetedBackend(inner, limit_usd=worst * 1.5)  # room for one worst case
     with pytest.raises(RuntimeError, match="network down"):
         budget.complete(_request())
-    assert budget.spent_usd == 0.0
+    assert budget.spent_usd == pytest.approx(worst)
+    assert budget.calls == 0
     inner.error = None
-    budget.complete(_request())  # would be blocked if the failed call still held its reservation
-    assert inner.calls == 2
-    assert budget.calls == 1
+    with pytest.raises(BudgetExceeded):
+        budget.complete(_request())  # a second worst case would cross the cap
+    assert inner.calls == 1
 
 
 def test_concurrent_calls_never_exceed_the_limit():
