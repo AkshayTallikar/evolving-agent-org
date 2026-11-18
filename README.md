@@ -162,8 +162,8 @@ few to see small differences ([scripts/compare_crossover.py](scripts/compare_cro
 Pareto selection (`--selection pareto`, off by default) ranks genomes by Pareto front on pass
 rate and cost instead of by fitness. Over 10 seeds at population 8 and 8 generations
 ([scripts/compare_selection.py](scripts/compare_selection.py)), its champions cost less but pass
-slightly fewer tasks. Mean held-out mean cost per task is $0.000215 against $0.000308 for scalar
-selection, about 30% cheaper. Train pass rate is 85.0% against 88.8%, and held-out pass rate is
+slightly fewer tasks. Champions' mean cost per held-out task is $0.000215 against $0.000308 with
+scalar selection, about 30% cheaper. Train pass rate is 85.0% against 88.8%, and held-out pass rate is
 57.5% against 60.0%. The final frontier holds 5.6 genomes on average against 5.3. Pareto scored
 higher on 2 seeds and lower on 3, so the held-out difference is within noise. The honest claim is
 a cheaper champion for a small loss in pass rate.

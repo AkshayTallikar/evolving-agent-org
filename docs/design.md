@@ -452,8 +452,8 @@ puts the lower front first, then the larger crowding distance, then the smaller 
 Selection mode. `selection="scalar"` (the default) ranks genomes by fitness, then by lower mean
 cost, then by id, exactly as before. `selection="pareto"` ranks the whole group being sorted or
 sampled (the population, the survivor pool, or the parents of one generation) with
-`pareto_rank`, and sorts by `pareto_sort_key`. Tournaments, elitism and the generation record
-all use that order. The champion reported in `RunResult` is still the highest-fitness genome
+`pareto_rank`, and sorts by `pareto_sort_key`. Tournaments and elitism use that order; generation records
+stay in fitness order so progress lines read the same in both modes. The champion reported in `RunResult` is still the highest-fitness genome
 in both modes, so runs stay comparable. `RunResult.frontier` lists the front-0 genome ids over
 every train evaluation, cheapest first, in both modes, and `report.md` shows them in a
 "Cost/quality frontier" section. Pareto ranks are only comparable within one group, which is

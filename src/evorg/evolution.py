@@ -357,7 +357,9 @@ def evolve(
         return sorted(members, key=lambda g: keys[g.genome_id])
 
     def record(index: int, members: Sequence[OrgGenome]) -> None:
-        ordered = sorted_population(members)
+        # Records report progress by fitness in both modes, so the best-fitness line stays
+        # comparable; selection order only drives tournaments and survivors.
+        ordered = sorted(members, key=lambda g: _rank_key(evaluations[g.genome_id]))
         generation = GenerationRecord(
             index=index,
             members=[(g.genome_id, evaluations[g.genome_id].fitness) for g in ordered],
