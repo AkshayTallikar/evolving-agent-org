@@ -75,7 +75,8 @@ def grade(code: str, tests: Sequence[str], timeout_s: float = 5.0) -> GradeResul
     script = f"CODE = {code!r}\nTESTS = {tests!r}\n" + _RUNNER_BODY
     try:
         proc = subprocess.run(
-            [sys.executable, "-I", "-c", script],
+            [sys.executable, "-I", "-"],
+            input=script,
             capture_output=True,
             text=True,
             timeout=timeout_s,
