@@ -106,6 +106,13 @@ def _add_config_flags(parser: argparse.ArgumentParser) -> None:
         default=default_config.eval_seeds,
         help="simulator seeds each genome is scored on (sim backend only)",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=default_config.workers,
+        help="tasks run at once; speeds up subprocess grading and API calls, "
+        "results are the same for any value",
+    )
 
 
 def _config_from_args(args: argparse.Namespace) -> EvolutionConfig:
@@ -115,6 +122,7 @@ def _config_from_args(args: argparse.Namespace) -> EvolutionConfig:
         seed=args.seed,
         cost_weight=args.cost_weight,
         eval_seeds=args.eval_seeds,
+        workers=args.workers,
     )
 
 

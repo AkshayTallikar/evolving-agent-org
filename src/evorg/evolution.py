@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import random
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -37,6 +38,7 @@ class EvolutionConfig:
     cost_weight: float = 10.0  # fitness = pass_rate - cost_weight * mean cost per task
     seed: int = 0
     eval_seeds: int = 1  # simulator seeds each genome is scored on, averaged
+    workers: int = 1  # tasks graded or called at once; never changes the results
 
 
 @dataclass(frozen=True)
@@ -105,7 +107,7 @@ class RunResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "config": asdict(self.config),
+            "config": _config_dict(self.config),
             "backend": self.backend,
             "generations": [
                 {
@@ -131,6 +133,13 @@ def _r(value: float) -> float:
     return round(float(value), FLOAT_DIGITS)
 
 
+def _config_dict(config: EvolutionConfig) -> dict[str, Any]:
+    """The config as saved in run.json. ``workers`` is left out: it changes only the speed."""
+    data = asdict(config)
+    data.pop("workers")
+    return data
+
+
 def _evaluation_dict(ev: Evaluation) -> dict[str, Any]:
     return {
         "pass_rate": _r(ev.pass_rate),
@@ -150,15 +159,14 @@ def _evaluation_dict(ev: Evaluation) -> dict[str, Any]:
     }
 
 
-def evaluate(
-    genome: OrgGenome, tasks: Sequence[Task], backend: LLMBackend, cost_weight: float
-) -> Evaluation:
-    """Run ``genome`` on every task in order and score it.
+def _check_workers(workers: int) -> None:
+    if workers < 1:
+        raise ValueError(f"workers must be at least 1, got {workers}")
 
-    ``pass_rate`` is the share of tasks passed, ``mean_cost_usd`` the mean cost per task, and
-    ``fitness = pass_rate - cost_weight * mean_cost_usd``. Nothing is rounded.
-    """
-    results = tuple(run_task(genome, task, backend) for task in tasks)
+
+def _summarise(
+    genome: OrgGenome, results: tuple[TaskResult, ...], cost_weight: float
+) -> Evaluation:
     n = len(results)
     pass_rate = sum(1 for r in results if r.passed) / n if n else 0.0
     mean_cost = sum(r.cost_usd for r in results) / n if n else 0.0
@@ -171,23 +179,66 @@ def evaluate(
     )
 
 
+def evaluate(
+    genome: OrgGenome,
+    tasks: Sequence[Task],
+    backend: LLMBackend,
+    cost_weight: float,
+    workers: int = 1,
+) -> Evaluation:
+    """Run ``genome`` on every task and score it.
+
+    ``pass_rate`` is the share of tasks passed, ``mean_cost_usd`` the mean cost per task, and
+    ``fitness = pass_rate - cost_weight * mean_cost_usd``. Nothing is rounded. With
+    ``workers > 1`` up to that many tasks run on a thread pool; ``results`` stay in task order,
+    so the Evaluation is the same as with one worker, as long as the backend is thread-safe.
+    """
+    _check_workers(workers)
+    if workers == 1:
+        results = tuple(run_task(genome, task, backend) for task in tasks)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = tuple(pool.map(lambda task: run_task(genome, task, backend), tasks))
+    return _summarise(genome, results, cost_weight)
+
+
+def _run_grid(
+    genome: OrgGenome,
+    tasks: Sequence[Task],
+    backends: Sequence[LLMBackend],
+    workers: int,
+) -> list[tuple[TaskResult, ...]]:
+    """Run ``genome`` on every (backend, task) pair on one pool; one result tuple per backend."""
+    pairs = [(backend, task) for backend in backends for task in tasks]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        flat = list(pool.map(lambda pair: run_task(genome, pair[1], pair[0]), pairs))
+    n = len(tasks)
+    return [tuple(flat[i * n : (i + 1) * n]) for i in range(len(backends))]
+
+
 def evaluate_many(
     genome: OrgGenome,
     tasks: Sequence[Task],
     backends: Sequence[LLMBackend],
     cost_weight: float,
+    workers: int = 1,
 ) -> Evaluation:
     """Score ``genome`` on ``tasks`` once per backend and average the scores.
 
     ``pass_rate``, ``mean_cost_usd`` and ``fitness`` are the means over the backends, and
     ``results`` holds every backend's per-task results in backend order. With one backend this
-    is exactly ``evaluate``.
+    is exactly ``evaluate``. ``workers`` runs the whole backend x task grid on one thread pool.
     """
     if not backends:
         raise ValueError("evaluate_many needs at least one backend")
-    if len(backends) == 1:
+    _check_workers(workers)
+    if len(backends) == 1 and workers == 1:
         return evaluate(genome, tasks, backends[0], cost_weight)
-    evals = [evaluate(genome, tasks, backend, cost_weight) for backend in backends]
+    if workers == 1:
+        evals = [evaluate(genome, tasks, backend, cost_weight) for backend in backends]
+    else:
+        grid = _run_grid(genome, tasks, backends, workers)
+        evals = [_summarise(genome, results, cost_weight) for results in grid]
     n = len(evals)
     return Evaluation(
         genome_id=genome.genome_id,
@@ -224,6 +275,7 @@ def _validate_config(config: EvolutionConfig) -> None:
         raise ValueError(f"elite must be between 0 and population, got {config.elite}")
     if config.eval_seeds < 1:
         raise ValueError(f"eval_seeds must be at least 1, got {config.eval_seeds}")
+    _check_workers(config.workers)
 
 
 def _as_backends(backend: LLMBackend | Sequence[LLMBackend]) -> list[LLMBackend]:
@@ -262,7 +314,7 @@ def evolve(
     def ensure_evaluated(genome: OrgGenome) -> None:
         if genome.genome_id not in evaluations:
             evaluations[genome.genome_id] = evaluate_many(
-                genome, train, train_backends, config.cost_weight
+                genome, train, train_backends, config.cost_weight, workers=config.workers
             )
 
     def sorted_population(members: Sequence[OrgGenome]) -> list[OrgGenome]:
@@ -336,9 +388,15 @@ def evolve(
     seed_id = seed.genome_id
     holdout_evals = {
         "champion": evaluate_many(
-            genomes[champion_id], holdout, eval_backends, config.cost_weight
+            genomes[champion_id],
+            holdout,
+            eval_backends,
+            config.cost_weight,
+            workers=config.workers,
         ),
-        "seed": evaluate_many(seed, holdout, eval_backends, config.cost_weight),
+        "seed": evaluate_many(
+            seed, holdout, eval_backends, config.cost_weight, workers=config.workers
+        ),
     }
     return RunResult(
         config=config,
