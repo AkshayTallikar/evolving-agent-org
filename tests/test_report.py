@@ -77,3 +77,9 @@ def test_render_says_held_out_seeds_were_unseen_for_sim_only(tiny_run):
     note = "Held-out tasks were scored on simulator seeds that selection never saw."
     assert note in render_markdown(tiny_run)
     assert note not in render_markdown(replace(tiny_run, backend="anthropic"))
+
+
+def test_render_header_mentions_crossover_rate_only_when_positive():
+    config = EvolutionConfig(population=3, generations=1, seed=0, crossover_rate=0.3)
+    text = render_markdown(run_simulated(config))
+    assert "crossover rate 0.3, " in text.splitlines()[2]

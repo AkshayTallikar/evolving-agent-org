@@ -323,6 +323,8 @@ class EvolutionConfig:
     elite: int = 1
     cost_weight: float = 10.0       # fitness = pass_rate − cost_weight · mean cost per task
     seed: int = 0
+    eval_seeds: int = 1
+    crossover_rate: float = 0.0     # chance a child is bred by crossover
 
 @dataclass(frozen=True)
 class Evaluation:
@@ -381,13 +383,22 @@ a pure function of its seed and the request, `run_task` keeps its bookkeeping pe
 the grader writes no shared files. The architect stays serial, and `workers` is left out of
 `run.json`, so runs are byte-identical for any worker count.
 
+`config.crossover_rate` (default 0.0, must be in [0, 1]) is the chance that a child slot is
+bred by crossover instead of mutation. When it fires and the population has two distinct
+genomes, two tournament winners are crossed with `crossover` (redrawing the second parent up
+to three times if it matches the first, then falling back to mutation). Half of the crossover
+children are then mutated once through the architect, as above. Lineage keeps both parents and
+a note of the form `crossover of A x B; <mutation note>`. At rate 0 the rng is not drawn, so
+runs match those made before crossover existed. `RunResult.crossovers` counts the children
+bred by crossover.
+
 ### 4.8 `evorg.report` and `evorg.cli`
 
 `report.render_markdown(run: RunResult) -> str`: fitness per generation (table and a unicode
 sparkline), the champion's genome, `diff_genomes(seed, champion)`, the lineage chain with
 each mutation's rationale, and the held-out comparison of seed vs champion.
 
-`evorg run --backend sim|anthropic --generations N --population N --seed N --out DIR`
+`evorg run --backend sim|anthropic --generations N --population N --seed N --crossover-rate R --out DIR`
 writes `DIR/run.json` and `DIR/report.md` and prints the report. `evorg show DIR` prints a
 saved report. `evorg bench GENOME.json [--split holdout]` evaluates one genome.
 
@@ -406,7 +417,7 @@ Duplicate names are renamed with the lowest free suffix (`tester2`, `tester3`, .
 Lineage: `parent_ids=(a.genome_id, b.genome_id)`, `generation=max(a, b) + 1`,
 `mutation_note="crossover of <a> x <b>"`. The child is validated. If validation fails, the
 result is a copy of `a` with the same lineage fields. Both parents must be valid. The same
-rng state always gives the same child. Wiring into the evolution loop is a later change.
+rng state always gives the same child. The evolution loop uses it through `crossover_rate` (4.7).
 
 ### 4.10 `evorg.pareto`
 

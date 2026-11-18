@@ -152,6 +152,13 @@ scoring seed, part of the in-run score is luck, because selection fits that seed
 Averaging each genome over three simulator seeds (`--eval-seeds 3`) cuts that gap and gives
 champions that hold up better on unseen noise, at three times the evaluation cost.
 
+Crossover (`--crossover-rate`, off by default) fixes a stall but doesn't help held-out tasks
+yet. Over 10 seeds at population 8, mutation-only search stops finding new organizations
+after about 18 distinct genomes. Running it for 24 generations instead of 8 still ends at
+91.2% train. With crossover at rate 0.3, the same 8 generations explore 33 genomes and reach
+100% train. Held-out pass rate stays at 60.0% either way, though four held-out tasks is too
+few to see small differences ([scripts/compare_crossover.py](scripts/compare_crossover.py)).
+
 Other patterns across seeds: champions almost always add a tester or reviewer and an
 edge-case instruction. Neutral instructions like "keep functions under 30 lines" drift along
 because nothing selects against them.
@@ -177,5 +184,3 @@ Python 3.11, 3.12 and 3.13. See the
 
 - [#10](https://github.com/AkshayTallikar/evolving-agent-org/issues/10) Evolve on real models
 - [#12](https://github.com/AkshayTallikar/evolving-agent-org/issues/12) Pareto selection on pass rate and cost
-- [#11](https://github.com/AkshayTallikar/evolving-agent-org/issues/11) Crossover between organizations
-- [#13](https://github.com/AkshayTallikar/evolving-agent-org/issues/13) Parallel evaluation

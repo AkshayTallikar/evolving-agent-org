@@ -12,10 +12,11 @@ from __future__ import annotations
 import random
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 from evorg.bench import Task, load_benchmark, task_index
+from evorg.crossover import crossover
 from evorg.executor import TaskResult, run_task
 from evorg.genome import OrgGenome, seed_genome
 from evorg.llm.base import LLMBackend
@@ -27,6 +28,8 @@ MAX_TOP_UP_TRIES = 1000
 FLOAT_DIGITS = 6
 TRAIN_SEED_STEP = 1000  # spacing between the simulator seeds of one run
 HOLDOUT_SEED_OFFSET = 500_000  # holdout seeds sit far above every training seed
+CROSSOVER_PAIR_TRIES = 3  # draws for a second parent that differs from the first
+CROSSOVER_MUTATE_PROB = 0.5  # chance that a crossover child is also mutated
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,7 @@ class EvolutionConfig:
     seed: int = 0
     eval_seeds: int = 1  # simulator seeds each genome is scored on, averaged
     workers: int = 1  # tasks graded or called at once; never changes the results
+    crossover_rate: float = 0.0  # chance that a child is bred by crossover, not mutation
 
 
 @dataclass(frozen=True)
@@ -93,6 +97,7 @@ class RunResult:
     seed_id: str
     holdout: dict[str, Evaluation]  # champion and seed on held-out tasks
     architect_stats: dict = field(default_factory=dict)
+    crossovers: int = 0  # children bred by crossover
 
     def lineage(self, genome_id: str) -> list[OrgGenome]:
         """The chain from a root genome (no parents) down to ``genome_id``, root first."""
@@ -122,6 +127,7 @@ class RunResult:
             "champion_id": self.champion_id,
             "seed_id": self.seed_id,
             "holdout": {name: _evaluation_dict(ev) for name, ev in self.holdout.items()},
+            "crossovers": self.crossovers,
             "architect_stats": {
                 key: _r(value) if isinstance(value, float) else value
                 for key, value in self.architect_stats.items()
@@ -276,6 +282,8 @@ def _validate_config(config: EvolutionConfig) -> None:
     if config.eval_seeds < 1:
         raise ValueError(f"eval_seeds must be at least 1, got {config.eval_seeds}")
     _check_workers(config.workers)
+    if not 0 <= config.crossover_rate <= 1:
+        raise ValueError(f"crossover_rate must be between 0 and 1, got {config.crossover_rate}")
 
 
 def _as_backends(backend: LLMBackend | Sequence[LLMBackend]) -> list[LLMBackend]:
@@ -361,11 +369,15 @@ def evolve(
     population = sorted_population(population)
     record(0, population)
 
+    crossovers = 0
     for gen in range(1, config.generations + 1):
         children: list[OrgGenome] = []
+        distinct = len({g.genome_id for g in population}) >= 2
         for _ in range(config.population):
-            parent = _tournament(population, evaluations, config.tournament_size, rng)
-            child = _mutate(parent, evaluations, architect, rng)
+            child, crossed = _make_child(
+                population, evaluations, config, architect, rng, distinct
+            )
+            crossovers += crossed
             child = register(child)
             ensure_evaluated(child)
             children.append(child)
@@ -408,6 +420,7 @@ def evolve(
         seed_id=seed_id,
         holdout=holdout_evals,
         architect_stats=dict(architect.stats),
+        crossovers=crossovers,
     )
 
 
@@ -418,6 +431,68 @@ def _try_apply(genome: OrgGenome, m: Any) -> OrgGenome | None:
         return None
 
 
+def _make_child(
+    population: Sequence[OrgGenome],
+    evaluations: dict[str, Evaluation],
+    config: EvolutionConfig,
+    architect: Architect,
+    rng: random.Random,
+    distinct: bool,
+) -> tuple[OrgGenome, int]:
+    """One child for the next generation, and 1 if it was bred by crossover, else 0.
+
+    With probability ``config.crossover_rate`` (and two distinct genomes to choose from) two
+    tournament winners are crossed. Otherwise the child is one mutation of a tournament winner.
+    The rng is not touched at all when the rate is zero.
+    """
+    if distinct and config.crossover_rate > 0 and rng.random() < config.crossover_rate:
+        pair = _crossover_pair(population, evaluations, config.tournament_size, rng)
+        if pair is not None:
+            return _crossover_child(pair, evaluations, architect, rng), 1
+    parent = _tournament(population, evaluations, config.tournament_size, rng)
+    return _mutate(parent, evaluations, architect, rng), 0
+
+
+def _crossover_pair(
+    population: Sequence[OrgGenome],
+    evaluations: dict[str, Evaluation],
+    tournament_size: int,
+    rng: random.Random,
+) -> tuple[OrgGenome, OrgGenome] | None:
+    """Two tournament winners with different ids, or None if the second draws keep matching."""
+    first = _tournament(population, evaluations, tournament_size, rng)
+    for _ in range(CROSSOVER_PAIR_TRIES):
+        second = _tournament(population, evaluations, tournament_size, rng)
+        if second.genome_id != first.genome_id:
+            return first, second
+    return None
+
+
+def _crossover_child(
+    pair: tuple[OrgGenome, OrgGenome],
+    evaluations: dict[str, Evaluation],
+    architect: Architect,
+    rng: random.Random,
+) -> OrgGenome:
+    """Cross two parents, then mutate the child with probability ``CROSSOVER_MUTATE_PROB``.
+
+    The child is unevaluated, so the architect is shown the first parent's failure report.
+    Lineage keeps both parents, the crossover generation and a note that reads
+    ``crossover of A x B; <mutation note>``.
+    """
+    first, second = pair
+    child = crossover(first, second, rng)
+    if rng.random() >= CROSSOVER_MUTATE_PROB:
+        return child
+    mutated = _mutated(child, evaluations[first.genome_id].report(), architect, rng)
+    return replace(
+        mutated,
+        parent_ids=child.parent_ids,
+        generation=child.generation,
+        mutation_note=f"{child.mutation_note}; {mutated.mutation_note}",
+    )
+
+
 def _mutate(
     parent: OrgGenome,
     evaluations: dict[str, Evaluation],
@@ -425,12 +500,18 @@ def _mutate(
     rng: random.Random,
 ) -> OrgGenome:
     """One child of ``parent``: the architect's proposal, or a random mutation if it fails."""
-    report = evaluations[parent.genome_id].report()
-    proposal = architect.propose(parent, report, n=1)[0]
+    return _mutated(parent, evaluations[parent.genome_id].report(), architect, rng)
+
+
+def _mutated(
+    genome: OrgGenome, report: str, architect: Architect, rng: random.Random
+) -> OrgGenome:
+    """``genome`` with the architect's proposal applied, or a random mutation if that fails."""
+    proposal = architect.propose(genome, report, n=1)[0]
     try:
-        return apply_mutation(parent, proposal)
+        return apply_mutation(genome, proposal)
     except MutationError:
-        return apply_mutation(parent, random_mutation(parent, rng))
+        return apply_mutation(genome, random_mutation(genome, rng))
 
 
 def simulated_backends(

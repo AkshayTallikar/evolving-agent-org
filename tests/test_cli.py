@@ -148,3 +148,27 @@ def test_anthropic_with_several_eval_seeds_returns_2(tmp_path, monkeypatch, caps
     assert code == 2
     assert "--eval-seeds" in capsys.readouterr().err
     assert not (tmp_path / "a").exists()
+
+
+def test_crossover_rate_flag_is_recorded_in_run_json(tmp_path):
+    out = tmp_path / "xo"
+    argv = ["run", "--generations", "1", "--population", "3", "--out", str(out)]
+    code = main([*argv, "--crossover-rate", "0.3"])
+    assert code == 0
+    data = json.loads((out / "run.json").read_text())
+    assert data["config"]["crossover_rate"] == 0.3
+    assert "crossover rate 0.3" in (out / "report.md").read_text()
+
+
+def test_crossover_rate_defaults_to_zero_and_is_not_in_the_report(tmp_path):
+    out = _run_tiny(tmp_path)
+    data = json.loads((out / "run.json").read_text())
+    assert data["config"]["crossover_rate"] == 0.0
+    assert "crossover rate" not in (out / "report.md").read_text()
+
+
+def test_crossover_rate_out_of_range_returns_1(tmp_path, capsys):
+    argv = ["run", "--generations", "1", "--population", "3", "--out", str(tmp_path / "bad")]
+    code = main([*argv, "--crossover-rate", "2"])
+    assert code == 1
+    assert "crossover_rate" in capsys.readouterr().err
