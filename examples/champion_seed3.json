@@ -1,0 +1,40 @@
+{
+  "generation": 7,
+  "genome_id": "1487391933",
+  "max_retries": 1,
+  "mutation_note": "+ role planner (planner). Why: Add a planner role to see whether it improves the outcome.",
+  "parent_ids": [
+    "8d8d0c8b08"
+  ],
+  "roles": [
+    {
+      "instructions": [],
+      "kind": "planner",
+      "model": "small",
+      "name": "planner"
+    },
+    {
+      "instructions": [
+        "Write a correct Python function.",
+        "Write a short docstring.",
+        "Handle empty input explicitly.",
+        "Be brief and skip unnecessary checks."
+      ],
+      "kind": "coder",
+      "model": "large",
+      "name": "coder"
+    },
+    {
+      "instructions": [],
+      "kind": "reviewer",
+      "model": "small",
+      "name": "reviewer"
+    },
+    {
+      "instructions": [],
+      "kind": "tester",
+      "model": "small",
+      "name": "tester"
+    }
+  ]
+}

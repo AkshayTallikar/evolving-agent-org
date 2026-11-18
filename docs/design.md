@@ -103,7 +103,8 @@ def diff_genomes(a: OrgGenome, b: OrgGenome) -> list[str]   # readable lines, e.
                                     # "coder: model small -> large", "max_retries 1 -> 2"
 ```
 
-Validation rules: 1 to 6 roles; names unique and non-empty; every kind in `ROLE_KINDS`;
+Validation rules: 1 to 6 roles (the per-kind limits below mean 5 is the most a valid
+organization can reach; the 6 is a coarse outer bound); names unique and non-empty; every kind in `ROLE_KINDS`;
 exactly one `coder`; at most 2 `planner`, at most 1 `tester`, at most 1 `reviewer`; every
 model in `MODEL_TIERS`; at most 8 instructions per role, each 1 to 200 characters, no
 duplicates within a role; `0 <= max_retries <= 4`.
