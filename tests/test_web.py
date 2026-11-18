@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +14,7 @@ pytest.importorskip("fastapi")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from evorg.cli import main  # noqa: E402
+from evorg.cli import EXIT_USAGE, build_parser, main  # noqa: E402
 from evorg.web import create_app  # noqa: E402
 from evorg.web.app import INDEX_FILE, champion_path  # noqa: E402
 
@@ -231,3 +233,33 @@ def test_index_is_served_with_pinned_react(client: TestClient) -> None:
     assert resp.headers["content-type"].startswith("text/html")
     assert "react@18.3.1" in resp.text
     assert resp.text == INDEX_FILE.read_text()
+
+
+def test_serve_parses_defaults_to_localhost() -> None:
+    args = build_parser().parse_args(["serve"])
+    assert args.host == "127.0.0.1"
+    assert args.port == 8000
+    assert args.runs_dir == "runs"
+
+
+def test_serve_calls_uvicorn_on_localhost(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[dict[str, Any]] = []
+    fake = types.ModuleType("uvicorn")
+    fake.run = lambda app, **kwargs: calls.append({"app": app, **kwargs})  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "uvicorn", fake)
+
+    assert main(["serve", "--runs-dir", str(tmp_path), "--port", "9001"]) == 0
+    assert len(calls) == 1
+    assert calls[0]["host"] == "127.0.0.1"
+    assert calls[0]["port"] == 9001
+    assert calls[0]["app"].title == "evorg lineage explorer"
+
+
+def test_serve_without_uvicorn_exits_2(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setitem(sys.modules, "uvicorn", None)
+    assert main(["serve"]) == EXIT_USAGE
+    assert 'install the web extra: pip install -e ".[web]"' in capsys.readouterr().err
