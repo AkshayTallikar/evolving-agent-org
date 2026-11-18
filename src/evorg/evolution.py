@@ -24,6 +24,8 @@ from evorg.mutation import Architect, MutationError, apply_mutation, random_muta
 REPORT_CHAR_LIMIT = 1500
 MAX_TOP_UP_TRIES = 1000
 FLOAT_DIGITS = 6
+TRAIN_SEED_STEP = 1000  # spacing between the simulator seeds of one run
+HOLDOUT_SEED_OFFSET = 500_000  # holdout seeds sit far above every training seed
 
 
 @dataclass(frozen=True)
@@ -34,6 +36,7 @@ class EvolutionConfig:
     elite: int = 1
     cost_weight: float = 10.0  # fitness = pass_rate - cost_weight * mean cost per task
     seed: int = 0
+    eval_seeds: int = 1  # simulator seeds each genome is scored on, averaged
 
 
 @dataclass(frozen=True)
@@ -168,6 +171,33 @@ def evaluate(
     )
 
 
+def evaluate_many(
+    genome: OrgGenome,
+    tasks: Sequence[Task],
+    backends: Sequence[LLMBackend],
+    cost_weight: float,
+) -> Evaluation:
+    """Score ``genome`` on ``tasks`` once per backend and average the scores.
+
+    ``pass_rate``, ``mean_cost_usd`` and ``fitness`` are the means over the backends, and
+    ``results`` holds every backend's per-task results in backend order. With one backend this
+    is exactly ``evaluate``.
+    """
+    if not backends:
+        raise ValueError("evaluate_many needs at least one backend")
+    if len(backends) == 1:
+        return evaluate(genome, tasks, backends[0], cost_weight)
+    evals = [evaluate(genome, tasks, backend, cost_weight) for backend in backends]
+    n = len(evals)
+    return Evaluation(
+        genome_id=genome.genome_id,
+        pass_rate=sum(ev.pass_rate for ev in evals) / n,
+        mean_cost_usd=sum(ev.mean_cost_usd for ev in evals) / n,
+        fitness=sum(ev.fitness for ev in evals) / n,
+        results=tuple(result for ev in evals for result in ev.results),
+    )
+
+
 def _rank_key(ev: Evaluation) -> tuple[float, float, str]:
     """Sort key, best first: higher fitness, then lower mean cost, then genome id."""
     return (-ev.fitness, ev.mean_cost_usd, ev.genome_id)
@@ -192,19 +222,35 @@ def _validate_config(config: EvolutionConfig) -> None:
         raise ValueError(f"tournament_size must be at least 1, got {config.tournament_size}")
     if not 0 <= config.elite <= config.population:
         raise ValueError(f"elite must be between 0 and population, got {config.elite}")
+    if config.eval_seeds < 1:
+        raise ValueError(f"eval_seeds must be at least 1, got {config.eval_seeds}")
+
+
+def _as_backends(backend: LLMBackend | Sequence[LLMBackend]) -> list[LLMBackend]:
+    if isinstance(backend, Sequence):
+        return list(backend)
+    return [backend]
 
 
 def evolve(
     config: EvolutionConfig,
-    backend: LLMBackend,
+    backend: LLMBackend | Sequence[LLMBackend],
     train: Sequence[Task],
     holdout: Sequence[Task],
     architect: Architect,
     on_generation: Callable[[GenerationRecord], None] | None = None,
+    holdout_backends: Sequence[LLMBackend] | None = None,
 ) -> RunResult:
-    """Run the evolutionary search described in design section 4.7."""
+    """Run the evolutionary search described in design section 4.7.
+
+    ``backend`` scores genomes on the training tasks; each genome's score is the mean over all
+    of them. ``holdout_backends`` scores the final champion and seed on the held-out tasks and
+    defaults to ``backend``. The architect keeps the backend it was built with.
+    """
     _validate_config(config)
     rng = random.Random(config.seed)
+    train_backends = _as_backends(backend)
+    eval_backends = train_backends if holdout_backends is None else list(holdout_backends)
 
     genomes: dict[str, OrgGenome] = {}
     evaluations: dict[str, Evaluation] = {}
@@ -215,7 +261,9 @@ def evolve(
 
     def ensure_evaluated(genome: OrgGenome) -> None:
         if genome.genome_id not in evaluations:
-            evaluations[genome.genome_id] = evaluate(genome, train, backend, config.cost_weight)
+            evaluations[genome.genome_id] = evaluate_many(
+                genome, train, train_backends, config.cost_weight
+            )
 
     def sorted_population(members: Sequence[OrgGenome]) -> list[OrgGenome]:
         return sorted(members, key=lambda g: _rank_key(evaluations[g.genome_id]))
@@ -287,12 +335,14 @@ def evolve(
     champion_id = min(evaluations.values(), key=_rank_key).genome_id
     seed_id = seed.genome_id
     holdout_evals = {
-        "champion": evaluate(genomes[champion_id], holdout, backend, config.cost_weight),
-        "seed": evaluate(seed, holdout, backend, config.cost_weight),
+        "champion": evaluate_many(
+            genomes[champion_id], holdout, eval_backends, config.cost_weight
+        ),
+        "seed": evaluate_many(seed, holdout, eval_backends, config.cost_weight),
     }
     return RunResult(
         config=config,
-        backend=backend.name,
+        backend=train_backends[0].name,
         generations=generations,
         genomes=genomes,
         evaluations=evaluations,
@@ -325,18 +375,41 @@ def _mutate(
         return apply_mutation(parent, random_mutation(parent, rng))
 
 
+def simulated_backends(
+    config: EvolutionConfig,
+) -> tuple[list[SimulatedBackend], list[SimulatedBackend]]:
+    """Training and holdout simulators for ``config``, with disjoint seeds.
+
+    Training seeds are ``config.seed + 1000 * k``, so seed 0 is the backend a single-seed run
+    always used. Holdout seeds start ``500_000`` above the seed and never coincide with a
+    training seed, so held-out scores come from simulator runs selection never saw.
+    """
+    index = task_index()
+    train = [
+        SimulatedBackend(index, seed=config.seed + TRAIN_SEED_STEP * k)
+        for k in range(config.eval_seeds)
+    ]
+    holdout = [
+        SimulatedBackend(index, seed=config.seed + HOLDOUT_SEED_OFFSET + TRAIN_SEED_STEP * k)
+        for k in range(max(1, config.eval_seeds))
+    ]
+    return train, holdout
+
+
 def run_simulated(
     config: EvolutionConfig,
     on_generation: Callable[[GenerationRecord], None] | None = None,
 ) -> RunResult:
-    """Evolve on the simulated backend, using the built-in train and holdout splits."""
-    backend = SimulatedBackend(task_index(), seed=config.seed)
-    architect = Architect(backend, random.Random(config.seed + 1))
+    """Evolve on the simulated backends, using the built-in train and holdout splits."""
+    _validate_config(config)
+    train_backends, holdout_backends = simulated_backends(config)
+    architect = Architect(train_backends[0], random.Random(config.seed + 1))
     return evolve(
         config,
-        backend,
+        train_backends,
         load_benchmark("train"),
         load_benchmark("holdout"),
         architect,
         on_generation=on_generation,
+        holdout_backends=holdout_backends,
     )
