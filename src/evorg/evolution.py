@@ -325,7 +325,10 @@ def _mutate(
         return apply_mutation(parent, random_mutation(parent, rng))
 
 
-def run_simulated(config: EvolutionConfig) -> RunResult:
+def run_simulated(
+    config: EvolutionConfig,
+    on_generation: Callable[[GenerationRecord], None] | None = None,
+) -> RunResult:
     """Evolve on the simulated backend, using the built-in train and holdout splits."""
     backend = SimulatedBackend(task_index(), seed=config.seed)
     architect = Architect(backend, random.Random(config.seed + 1))
@@ -335,4 +338,5 @@ def run_simulated(config: EvolutionConfig) -> RunResult:
         load_benchmark("train"),
         load_benchmark("holdout"),
         architect,
+        on_generation=on_generation,
     )
