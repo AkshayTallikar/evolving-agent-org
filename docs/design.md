@@ -422,7 +422,8 @@ rng state always gives the same child. The evolution loop uses it through `cross
 ### 4.10 `evorg.pareto`
 
 Pure ranking of genomes on two objectives: maximise `pass_rate`, minimise `mean_cost_usd`.
-It does not change the evolution loop; wiring it into selection is a later step.
+`EvolutionConfig.selection` picks how the loop ranks genomes; see the selection mode paragraph
+below the function list.
 
 ```python
 @dataclass(frozen=True)
@@ -447,6 +448,16 @@ range 0 adds nothing; fronts of one or two points give `inf` to every point. Tie
 `key`. Duplicate keys raise `ValueError`. Output does not depend on input order. The sort key
 puts the lower front first, then the larger crowding distance, then the smaller key.
 `points_from_evaluations` uses the mapping key as the point key.
+
+Selection mode. `selection="scalar"` (the default) ranks genomes by fitness, then by lower mean
+cost, then by id, exactly as before. `selection="pareto"` ranks the whole group being sorted or
+sampled (the population, the survivor pool, or the parents of one generation) with
+`pareto_rank`, and sorts by `pareto_sort_key`. Tournaments, elitism and the generation record
+all use that order. The champion reported in `RunResult` is still the highest-fitness genome
+in both modes, so runs stay comparable. `RunResult.frontier` lists the front-0 genome ids over
+every train evaluation, cheapest first, in both modes, and `report.md` shows them in a
+"Cost/quality frontier" section. Pareto ranks are only comparable within one group, which is
+why `selection_keys` is recomputed for each group.
 
 ### 4.11 `evorg.web`
 

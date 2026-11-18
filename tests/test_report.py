@@ -83,3 +83,14 @@ def test_render_header_mentions_crossover_rate_only_when_positive():
     config = EvolutionConfig(population=3, generations=1, seed=0, crossover_rate=0.3)
     text = render_markdown(run_simulated(config))
     assert "crossover rate 0.3, " in text.splitlines()[2]
+
+
+def test_render_has_cost_quality_frontier_section(tiny_run):
+    text = render_markdown(tiny_run)
+    assert "## Cost/quality frontier" in text
+    for genome_id in tiny_run.frontier:
+        assert genome_id in text
+    frontier_part = text.split("## Cost/quality frontier", 1)[1].split("## Held-out", 1)[0]
+    assert frontier_part.count("|") > 0
+    table_rows = [line for line in frontier_part.splitlines() if line.startswith("| ")]
+    assert len(table_rows) == len(tiny_run.frontier) + 2  # header, separator, one per genome

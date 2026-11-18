@@ -172,3 +172,25 @@ def test_crossover_rate_out_of_range_returns_1(tmp_path, capsys):
     code = main([*argv, "--crossover-rate", "2"])
     assert code == 1
     assert "crossover_rate" in capsys.readouterr().err
+
+
+def test_selection_flag_is_recorded_in_run_json_and_report(tmp_path):
+    out = tmp_path / "pareto"
+    argv = ["run", "--generations", "1", "--population", "3", "--out", str(out)]
+    assert main([*argv, "--selection", "pareto"]) == 0
+    data = json.loads((out / "run.json").read_text())
+    assert data["config"]["selection"] == "pareto"
+    assert "pareto selection" in (out / "report.md").read_text()
+
+
+def test_selection_defaults_to_scalar(tmp_path):
+    out = _run_tiny(tmp_path)
+    assert json.loads((out / "run.json").read_text())["config"]["selection"] == "scalar"
+
+
+def test_selection_flag_rejects_unknown_mode(tmp_path, capsys):
+    argv = ["run", "--generations", "1", "--population", "3", "--out", str(tmp_path / "bad")]
+    with pytest.raises(SystemExit) as excinfo:
+        main([*argv, "--selection", "nsga"])
+    assert excinfo.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err

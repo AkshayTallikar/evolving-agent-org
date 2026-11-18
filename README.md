@@ -159,6 +159,15 @@ after about 18 distinct genomes. Running it for 24 generations instead of 8 stil
 100% train. Held-out pass rate stays at 60.0% either way, though four held-out tasks is too
 few to see small differences ([scripts/compare_crossover.py](scripts/compare_crossover.py)).
 
+Pareto selection (`--selection pareto`, off by default) ranks genomes by Pareto front on pass
+rate and cost instead of by fitness. Over 10 seeds at population 8 and 8 generations
+([scripts/compare_selection.py](scripts/compare_selection.py)), its champions cost less but pass
+slightly fewer tasks. Mean held-out mean cost per task is $0.000215 against $0.000308 for scalar
+selection, about 30% cheaper. Train pass rate is 85.0% against 88.8%, and held-out pass rate is
+57.5% against 60.0%. The final frontier holds 5.6 genomes on average against 5.3. Pareto scored
+higher on 2 seeds and lower on 3, so the held-out difference is within noise. The honest claim is
+a cheaper champion for a small loss in pass rate.
+
 Other patterns across seeds: champions almost always add a tester or reviewer and an
 edge-case instruction. Neutral instructions like "keep functions under 30 lines" drift along
 because nothing selects against them.
@@ -183,4 +192,3 @@ Python 3.11, 3.12 and 3.13. See the
 ## Roadmap (milestone 2)
 
 - [#10](https://github.com/AkshayTallikar/evolving-agent-org/issues/10) Evolve on real models
-- [#12](https://github.com/AkshayTallikar/evolving-agent-org/issues/12) Pareto selection on pass rate and cost
