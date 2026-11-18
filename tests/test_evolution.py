@@ -9,8 +9,10 @@ from evorg.evolution import (
     Evaluation,
     EvolutionConfig,
     evaluate,
+    evaluate_many,
     evolve,
     run_simulated,
+    simulated_backends,
 )
 from evorg.executor import TaskResult, run_task
 from evorg.genome import seed_genome
@@ -50,6 +52,37 @@ def test_evaluate_matches_task_results():
     assert ev.pass_rate == pytest.approx(pass_rate)
     assert ev.mean_cost_usd == pytest.approx(mean_cost)
     assert ev.fitness == pytest.approx(pass_rate - cost_weight * mean_cost)
+
+
+def test_evaluate_many_with_one_backend_equals_evaluate():
+    backend = SimulatedBackend(task_index(), seed=0)
+    genome = seed_genome()
+    tasks = load_benchmark("train")[:4]
+
+    assert evaluate_many(genome, tasks, [backend], 10.0) == evaluate(genome, tasks, backend, 10.0)
+
+
+def test_evaluate_many_averages_scores_over_backends():
+    index = task_index()
+    backends = [SimulatedBackend(index, seed=0), SimulatedBackend(index, seed=1000)]
+    genome = seed_genome()
+    tasks = load_benchmark("train")[:4]
+    cost_weight = 10.0
+
+    many = evaluate_many(genome, tasks, backends, cost_weight)
+    singles = [evaluate(genome, tasks, b, cost_weight) for b in backends]
+
+    assert many.genome_id == genome.genome_id
+    assert many.pass_rate == pytest.approx(sum(e.pass_rate for e in singles) / 2)
+    assert many.mean_cost_usd == pytest.approx(sum(e.mean_cost_usd for e in singles) / 2)
+    assert many.fitness == pytest.approx(sum(e.fitness for e in singles) / 2)
+    assert many.results == singles[0].results + singles[1].results
+    assert many.report().startswith("Pass rate ")
+
+
+def test_evaluate_many_needs_a_backend():
+    with pytest.raises(ValueError):
+        evaluate_many(seed_genome(), load_benchmark("train")[:1], [], 10.0)
 
 
 def test_evaluate_with_no_tasks_scores_zero():
@@ -151,6 +184,36 @@ def test_evolution_improves_on_the_seed():
     champion = result.evaluations[result.champion_id].fitness
     seed = result.evaluations[result.seed_id].fitness
     assert champion > seed
+
+
+def test_run_with_two_eval_seeds_is_deterministic():
+    config = EvolutionConfig(population=4, generations=2, seed=0, eval_seeds=2)
+    first = json.dumps(run_simulated(config).to_dict(), sort_keys=True)
+    second = json.dumps(run_simulated(config).to_dict(), sort_keys=True)
+    assert first == second
+    assert json.loads(first)["config"]["eval_seeds"] == 2
+
+
+def test_simulated_backends_use_disjoint_seeds_for_holdout():
+    config = EvolutionConfig(seed=7, eval_seeds=3)
+    train, holdout = simulated_backends(config)
+    assert [b.seed for b in train] == [7, 1007, 2007]
+    assert [b.seed for b in holdout] == [500_007, 501_007, 502_007]
+    assert not set(b.seed for b in train) & set(b.seed for b in holdout)
+
+
+def test_holdout_still_gets_a_seed_when_eval_seeds_is_one():
+    _, holdout = simulated_backends(EvolutionConfig(seed=0, eval_seeds=1))
+    assert [b.seed for b in holdout] == [500_000]
+
+
+def test_eval_seeds_below_one_is_rejected():
+    backend = SimulatedBackend(task_index(), seed=0)
+    architect = Architect(backend, random.Random(1))
+    with pytest.raises(ValueError, match="eval_seeds"):
+        evolve(EvolutionConfig(eval_seeds=0), backend, [], [], architect)
+    with pytest.raises(ValueError, match="eval_seeds"):
+        run_simulated(EvolutionConfig(eval_seeds=0))
 
 
 def test_invalid_config_is_rejected():

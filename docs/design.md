@@ -354,8 +354,16 @@ class RunResult:
     def to_dict(self) -> dict
 
 def evaluate(genome, tasks, backend, cost_weight) -> Evaluation
-def evolve(config, backend, train, holdout, architect, on_generation=None) -> RunResult
+def evolve(config, backend, train, holdout, architect, on_generation=None,
+           holdout_backends=None) -> RunResult
+def evaluate_many(genome, tasks, backends, cost_weight) -> Evaluation   # mean over backends
 ```
+
+`backend` may be one backend or a list; each genome's training score is the mean over the
+list (`evaluate_many`). `config.eval_seeds` (default 1) sets how many simulators
+`run_simulated` builds: training seeds `seed + 1000k`, held-out seeds `seed + 500000 + 1000k`,
+so held-out scores never reuse noise that selection saw. The architect always uses the first
+training backend.
 
 Generation 0 is the seed plus `population − 1` single mutations of it. Each generation, every
 parent slot is filled by tournament selection; each parent produces one child through the

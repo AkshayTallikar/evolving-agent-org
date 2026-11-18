@@ -63,3 +63,17 @@ def test_render_no_sim_note_for_other_backends(tiny_run):
 def test_render_says_so_when_champion_is_seed(tiny_run):
     text = render_markdown(replace(tiny_run, champion_id=tiny_run.seed_id))
     assert "No change: the seed was never beaten." in text
+
+
+def test_render_header_mentions_simulator_seeds_only_when_several(tiny_run):
+    single = render_markdown(tiny_run)
+    assert "simulator seeds" not in single.split("## ")[0]
+
+    multi = render_markdown(replace(tiny_run, config=replace(tiny_run.config, eval_seeds=3)))
+    assert "scored over 3 simulator seeds" in multi.split("## ")[0]
+
+
+def test_render_says_held_out_seeds_were_unseen_for_sim_only(tiny_run):
+    note = "Held-out tasks were scored on simulator seeds that selection never saw."
+    assert note in render_markdown(tiny_run)
+    assert note not in render_markdown(replace(tiny_run, backend="anthropic"))

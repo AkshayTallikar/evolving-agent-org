@@ -4,10 +4,13 @@ Each run evolves with one simulator seed, so a champion can partly fit that seed
 luck. This script runs evolution for 10 seeds, then scores each champion and the
 seed genome on 20 fresh simulator seeds, on both the train and held-out tasks.
 
-    python scripts/robustness.py
+    python scripts/robustness.py                 # one scoring seed per genome
+    python scripts/robustness.py --eval-seeds 3  # selection averages 3 seeds
 """
 
 from __future__ import annotations
+
+import argparse
 
 from evorg.bench import load_benchmark, task_index
 from evorg.evolution import EvolutionConfig, evaluate, run_simulated
@@ -27,10 +30,14 @@ def mean_pass_rate(genome: OrgGenome, tasks, seeds) -> float:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--eval-seeds", type=int, default=1)
+    eval_seeds = parser.parse_args().eval_seeds
     train, holdout = load_benchmark("train"), load_benchmark("holdout")
     in_run, fresh_train, fresh_holdout = [], [], []
     for s in RUN_SEEDS:
-        result = run_simulated(EvolutionConfig(population=8, generations=8, seed=s))
+        config = EvolutionConfig(population=8, generations=8, seed=s, eval_seeds=eval_seeds)
+        result = run_simulated(config)
         champion = result.genomes[result.champion_id]
         in_run.append(result.evaluations[result.champion_id].pass_rate)
         fresh_train.append(mean_pass_rate(champion, train, FRESH_SEEDS))
