@@ -113,6 +113,12 @@ def _add_config_flags(parser: argparse.ArgumentParser) -> None:
         help="tasks run at once; speeds up subprocess grading and API calls, "
         "results are the same for any value",
     )
+    parser.add_argument(
+        "--crossover-rate",
+        type=float,
+        default=default_config.crossover_rate,
+        help="chance that a child is bred by crossing two parents (0 to 1, default 0)",
+    )
 
 
 def _config_from_args(args: argparse.Namespace) -> EvolutionConfig:
@@ -123,6 +129,7 @@ def _config_from_args(args: argparse.Namespace) -> EvolutionConfig:
         cost_weight=args.cost_weight,
         eval_seeds=args.eval_seeds,
         workers=args.workers,
+        crossover_rate=args.crossover_rate,
     )
 
 

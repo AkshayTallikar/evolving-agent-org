@@ -223,3 +223,53 @@ def test_invalid_config_is_rejected():
         evolve(EvolutionConfig(population=0), backend, [], [], architect)
     with pytest.raises(ValueError):
         evolve(EvolutionConfig(population=2, elite=3), backend, [], [], architect)
+
+
+@pytest.mark.parametrize("rate", [-0.1, 1.5, float("nan")])
+def test_crossover_rate_outside_zero_to_one_is_rejected(rate):
+    with pytest.raises(ValueError, match="crossover_rate"):
+        run_simulated(EvolutionConfig(population=4, generations=1, crossover_rate=rate))
+
+
+def test_crossover_rate_zero_is_the_default_and_pinned_champion_is_unchanged():
+    assert EvolutionConfig().crossover_rate == 0.0
+    result = run_simulated(EvolutionConfig(population=8, generations=8, seed=0))
+    assert result.champion_id == "fba3bf8545"
+    assert result.evaluations[result.champion_id].fitness == pytest.approx(0.624522, abs=1e-6)
+    assert result.crossovers == 0
+
+
+def test_rate_one_breeds_children_from_two_recorded_parents():
+    config = EvolutionConfig(population=6, generations=3, seed=0, crossover_rate=1.0)
+    result = run_simulated(config)
+    for genome in result.genomes.values():
+        genome.validate()
+    two_parent = [g for g in result.genomes.values() if len(g.parent_ids) == 2]
+    assert two_parent
+    for genome in two_parent:
+        assert all(parent in result.genomes for parent in genome.parent_ids)
+        assert genome.mutation_note.startswith("crossover of ")
+        assert genome.generation >= 1
+
+
+def test_crossover_count_is_recorded_in_the_result_and_dict():
+    config = EvolutionConfig(population=6, generations=3, seed=0, crossover_rate=1.0)
+    result = run_simulated(config)
+    assert 0 < result.crossovers <= 6 * 3
+    assert result.to_dict()["crossovers"] == result.crossovers
+
+
+def test_run_with_crossover_is_deterministic():
+    config = EvolutionConfig(population=6, generations=3, seed=0, crossover_rate=0.3)
+    first = json.dumps(run_simulated(config).to_dict(), sort_keys=True)
+    second = json.dumps(run_simulated(config).to_dict(), sort_keys=True)
+    assert first == second
+    assert json.loads(first)["config"]["crossover_rate"] == 0.3
+
+
+def test_crossover_rate_zero_and_omitted_give_the_same_run():
+    explicit = run_simulated(
+        EvolutionConfig(population=4, generations=2, seed=3, crossover_rate=0)
+    )
+    omitted = run_simulated(EvolutionConfig(population=4, generations=2, seed=3))
+    assert explicit.to_dict() == omitted.to_dict()
