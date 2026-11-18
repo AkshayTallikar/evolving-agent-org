@@ -186,6 +186,43 @@ def _validate_instructions(role: RoleSpec) -> None:
         seen.add(text)
 
 
+def diff_genomes(a: OrgGenome, b: OrgGenome) -> list[str]:
+    """Readable lines describing how genome ``b`` differs from ``a``. Empty if equal.
+
+    Roles are matched by name. Output order: added roles, removed roles, per-role changes
+    (in ``b``'s role order), then the retry budget.
+    """
+    lines: list[str] = []
+    a_names = {role.name for role in a.roles}
+    b_names = {role.name for role in b.roles}
+
+    for role in b.roles:
+        if role.name not in a_names:
+            lines.append(f"+ role {role.name} ({role.kind}, {role.model})")
+    for role in a.roles:
+        if role.name not in b_names:
+            lines.append(f"- role {role.name} ({role.kind}, {role.model})")
+
+    for new in b.roles:
+        if new.name not in a_names:
+            continue
+        old = a.role(new.name)
+        if old.kind != new.kind:
+            lines.append(f"{new.name}: kind {old.kind} -> {new.kind}")
+        if old.model != new.model:
+            lines.append(f"{new.name}: model {old.model} -> {new.model}")
+        for text in new.instructions:
+            if text not in old.instructions:
+                lines.append(f"{new.name}: + instruction '{text}'")
+        for text in old.instructions:
+            if text not in new.instructions:
+                lines.append(f"{new.name}: - instruction '{text}'")
+
+    if a.max_retries != b.max_retries:
+        lines.append(f"max_retries {a.max_retries} -> {b.max_retries}")
+    return lines
+
+
 def seed_genome() -> OrgGenome:
     """The starting organization: a single small-model coder with one instruction."""
     return OrgGenome(
