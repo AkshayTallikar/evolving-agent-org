@@ -51,7 +51,10 @@ flowchart LR
 | `executor.py` | Runs one organization on one task: planners, coder, then tester or reviewer, with retries on feedback |
 | `mutation.py` | Seven mutation operators and the architect, which parses LLM output leniently |
 | `evolution.py` | Tournament selection, elitism, an evaluation cache, held-out scoring |
+| `crossover.py` | Role-aligned crossover between two organizations |
+| `pareto.py` | NSGA-II style ranking on pass rate and cost |
 | `report.py`, `cli.py` | Markdown run report and the `evorg` command |
+| `web/` | FastAPI API and a React lineage explorer for saved runs |
 
 The full design, with module contracts and the testing strategy, is in
 [docs/design.md](docs/design.md).
@@ -77,7 +80,16 @@ evorg show runs/sim-seed3
 # score one genome on a split
 evorg bench examples/seed_genome.json --split holdout
 
-pytest          # 360 tests, no API key needed
+pytest          # runs offline, no API key needed
+```
+
+To browse runs as a family tree, install the web extra and serve the runs folder. Click any
+organization to see its roles, scores, the architect's reason for the change and the diff
+from its parent:
+
+```bash
+pip install -e ".[web]"
+evorg serve --runs-dir runs      # then open http://127.0.0.1:8000
 ```
 
 To evolve with real Claude models (small tier is Haiku, large tier is Opus), install the extra
@@ -162,4 +174,3 @@ Python 3.11, 3.12 and 3.13. See the
 - [#12](https://github.com/AkshayTallikar/evolving-agent-org/issues/12) Pareto selection on pass rate and cost
 - [#11](https://github.com/AkshayTallikar/evolving-agent-org/issues/11) Crossover between organizations
 - [#13](https://github.com/AkshayTallikar/evolving-agent-org/issues/13) Parallel evaluation
-- [#9](https://github.com/AkshayTallikar/evolving-agent-org/issues/9) Web lineage explorer

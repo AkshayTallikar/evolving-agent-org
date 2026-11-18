@@ -1,4 +1,4 @@
-"""Command-line interface: ``evorg run``, ``evorg show`` and ``evorg bench``.
+"""Command-line interface: ``evorg run``, ``evorg show``, ``evorg bench`` and ``evorg serve``.
 
 ``main`` returns an exit code and never calls ``sys.exit`` itself, so tests can call it
 directly. Progress goes to stderr; reports and tables go to stdout.
@@ -25,6 +25,7 @@ EXIT_ERROR = 1
 EXIT_USAGE = 2
 REPORT_NAME = "report.md"
 RUN_NAME = "run.json"
+WEB_MISSING = 'install the web extra: pip install -e ".[web]"'
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -59,12 +60,17 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--split", choices=["train", "holdout", "all"], default="train")
     bench.add_argument("--backend", choices=["sim"], default="sim")
     bench.add_argument("--seed", type=int, default=0)
+
+    serve = sub.add_parser("serve", help="serve saved runs and the lineage explorer page")
+    serve.add_argument("--runs-dir", default="runs", help="directory holding run folders")
+    serve.add_argument("--port", type=int, default=8000)
+    serve.add_argument("--host", default="127.0.0.1")
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    handlers = {"run": _cmd_run, "show": _cmd_show, "bench": _cmd_bench}
+    handlers = {"run": _cmd_run, "show": _cmd_show, "bench": _cmd_bench, "serve": _cmd_serve}
     return handlers[args.command](args)
 
 
@@ -162,4 +168,18 @@ def _cmd_bench(args: argparse.Namespace) -> int:
         f"mean cost ${ev.mean_cost_usd:.6f} per task, total ${total_cost:.6f}, "
         f"fitness {ev.fitness:.4f}"
     )
+    return EXIT_OK
+
+
+def _cmd_serve(args: argparse.Namespace) -> int:
+    try:
+        import uvicorn
+
+        from evorg.web import create_app
+    except ImportError:
+        print(WEB_MISSING, file=sys.stderr)
+        return EXIT_USAGE
+
+    print(f"serving {args.runs_dir} at http://{args.host}:{args.port}", file=sys.stderr, flush=True)
+    uvicorn.run(create_app(Path(args.runs_dir)), host=args.host, port=args.port)
     return EXIT_OK

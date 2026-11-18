@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>evorg lineage</title>
+<style>
+:root {
+  --bg: #ffffff; --fg: #1d1d1f; --muted: #6e6e73; --panel: #f5f5f7;
+  --line: #c7c7cc; --accent: #0a84ff; --champ: #e07b00;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1c1c1e; --fg: #f2f2f7; --muted: #aeaeb2; --panel: #2c2c2e;
+    --line: #58585c; --accent: #64b5ff; --champ: #ffb340;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #1c1c1e; --fg: #f2f2f7; --muted: #aeaeb2; --panel: #2c2c2e;
+  --line: #58585c; --accent: #64b5ff; --champ: #ffb340;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 15px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 12px 16px;
+  border-bottom: 1px solid var(--line); }
+h1 { font-size: 18px; margin: 0; }
+h2 { font-size: 17px; margin: 0 0 8px; }
+h3 { font-size: 14px; margin: 16px 0 6px; color: var(--muted); text-transform: uppercase; }
+select { font: inherit; padding: 4px 6px; max-width: 100%; background: var(--bg); color: var(--fg); }
+main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 340px); gap: 16px;
+  padding: 16px; }
+@media (max-width: 720px) { main { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--panel); border-radius: 8px; padding: 14px; min-width: 0; }
+.muted { color: var(--muted); }
+.tree-wrap { overflow-x: auto; background: var(--panel); border-radius: 8px; }
+.tree-wrap svg { display: block; }
+.legend { font-size: 13px; color: var(--muted); margin-top: 8px; }
+.edge { fill: none; stroke: var(--line); stroke-width: 1.5; }
+.edge.on { stroke: var(--champ); stroke-width: 3; }
+.node { stroke: var(--line); stroke-width: 1.5; cursor: pointer; }
+.node.on { stroke: var(--champ); stroke-width: 3; }
+.node.sel { stroke: var(--accent); stroke-width: 4; }
+.dot:focus { outline: none; }
+.dot:focus .node { stroke: var(--accent); stroke-width: 4; }
+.label { font-size: 11px; fill: var(--fg); }
+.label.champ { font-weight: 700; fill: var(--champ); }
+.badge { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 10px;
+  font-size: 12px; background: var(--champ); color: #fff; vertical-align: middle; }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 0; }
+dt { color: var(--muted); }
+dd { margin: 0; }
+ul { margin: 4px 0; padding-left: 20px; }
+.role { margin-bottom: 8px; }
+.note { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script>
+"use strict";
+const h = React.createElement;
+const { useState, useEffect } = React;
+const COL = 120;   // horizontal distance between generations
+const ROW = 60;    // vertical distance between genomes in one generation
+const LEFT = 40;
+const TOP = 44;
+const R = 14;      // node radius
+
+function enc(s) { return encodeURIComponent(s); }
+
+async function getJson(url) {
+  const res = await fetch(url);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail || res.statusText);
+  return body;
+}
+
+// Best first: higher fitness, then lower id.
+function byScore(a, b) {
+  const fa = a.fitness == null ? -Infinity : a.fitness;
+  const fb = b.fitness == null ? -Infinity : b.fitness;
+  if (fa !== fb) return fb > fa ? 1 : -1;
+  return a.id < b.id ? -1 : 1;
+}
+
+function layout(nodes) {
+  const gens = [...new Set(nodes.map(n => n.generation))].sort((a, b) => a - b);
+  const pos = {};
+  let rows = 0;
+  gens.forEach((g, col) => {
+    const column = nodes.filter(n => n.generation === g).sort(byScore);
+    rows = Math.max(rows, column.length);
+    column.forEach((n, row) => { pos[n.id] = { x: LEFT + col * COL, y: TOP + row * ROW }; });
+  });
+  return {
+    gens,
+    pos,
+    width: LEFT * 2 + Math.max(gens.length - 1, 0) * COL,
+    height: TOP + rows * ROW,
+  };
+}
+
+// Low fitness is pale, high fitness is dark and yellow-green.
+function fillColor(f, lo, hi) {
+  if (f == null) return "var(--panel)";
+  const t = hi > lo ? (f - lo) / (hi - lo) : 1;
+  return `hsl(${Math.round(210 - 150 * t)} 65% ${Math.round(82 - 42 * t)}%)`;
+}
+
+function Tree({ nodes, selected, onSelect }) {
+  const lay = layout(nodes);
+  const byId = {};
+  nodes.forEach(n => { byId[n.id] = n; });
+  const fits = nodes.map(n => n.fitness).filter(f => f != null);
+  const lo = fits.length ? Math.min(...fits) : 0;
+  const hi = fits.length ? Math.max(...fits) : 0;
+
+  const edges = [];
+  nodes.forEach(child => {
+    child.parents.forEach(pid => {
+      const p = lay.pos[pid];
+      const c = lay.pos[child.id];
+      if (!p || !c) return;
+      const mid = (p.x + c.x) / 2;
+      const on = child.on_champion_path && byId[pid].on_champion_path;
+      edges.push(h("path", {
+        key: pid + ">" + child.id,
+        className: on ? "edge on" : "edge",
+        d: `M${p.x} ${p.y} C${mid} ${p.y} ${mid} ${c.y} ${c.x} ${c.y}`,
+      }));
+    });
+  });
+
+  const dots = nodes.map(n => {
+    const p = lay.pos[n.id];
+    const cls = ["node", n.on_champion_path ? "on" : "", n.id === selected ? "sel" : ""].join(" ");
+    const pick = () => onSelect(n.id);
+    return h("g", {
+      key: n.id,
+      className: "dot",
+      role: "button",
+      tabIndex: 0,
+      "aria-label": `genome ${n.id}, fitness ${n.fitness ?? "not evaluated"}`,
+      onClick: pick,
+      onKeyDown: e => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); }
+      },
+    },
+    h("circle", { cx: p.x, cy: p.y, r: R, className: cls, style: { fill: fillColor(n.fitness, lo, hi) } }),
+    h("text", {
+      x: p.x, y: p.y + R + 14, textAnchor: "middle",
+      className: n.is_champion ? "label champ" : "label",
+    }, n.id));
+  });
+
+  const heads = lay.gens.map((g, col) => h("text", {
+    key: "gen" + g, x: LEFT + col * COL, y: 22, textAnchor: "middle", className: "label",
+  }, "gen " + g));
+
+  return h("div", { className: "tree-wrap" },
+    h("svg", {
+      width: lay.width, height: lay.height,
+      role: "img", "aria-label": "Family tree of genomes by generation",
+    }, heads, edges, dots));
+}
+
+function NoteText({ text }) {
+  const i = text.indexOf("Why:");
+  if (!text) return h("p", { className: "note muted" }, "No note recorded.");
+  if (i < 0) return h("p", { className: "note" }, text);
+  return h("p", { className: "note" },
+    text.slice(0, i).trim(), h("br"), h("strong", null, "Why:"), text.slice(i + 4));
+}
+
+function Details({ runName, genomeId, champion }) {
+  const [state, setState] = useState({ data: null, error: null });
+
+  useEffect(() => {
+    if (!genomeId) return undefined;
+    let live = true;
+    setState({ data: null, error: null });
+    getJson(`api/runs/${enc(runName)}/genomes/${enc(genomeId)}`).then(
+      data => { if (live) setState({ data, error: null }); },
+      err => { if (live) setState({ data: null, error: err.message }); },
+    );
+    return () => { live = false; };
+  }, [runName, genomeId]);
+
+  if (!genomeId) return h("div", { className: "panel muted" }, "Click a genome to see its details.");
+  if (state.error) return h("div", { className: "panel" }, state.error);
+  if (!state.data) return h("div", { className: "panel muted" }, "Loading...");
+
+  const { genome, evaluation: ev, diff_from_parent: diff } = state.data;
+  const pct = v => (v == null ? "n/a" : (v * 100).toFixed(1) + "%");
+  const usd = v => (v == null ? "n/a" : "$" + v.toFixed(6));
+  return h("div", { className: "panel" },
+    h("h2", null, genome.genome_id, genomeId === champion ? h("span", { className: "badge" }, "champion") : null),
+    h("dl", null,
+      h("dt", null, "generation"), h("dd", null, genome.generation),
+      h("dt", null, "fitness"), h("dd", null, ev ? ev.fitness.toFixed(4) : "n/a"),
+      h("dt", null, "pass rate"), h("dd", null, ev ? pct(ev.pass_rate) : "n/a"),
+      h("dt", null, "mean cost"), h("dd", null, ev ? usd(ev.mean_cost_usd) : "n/a"),
+      h("dt", null, "retry budget"), h("dd", null, genome.max_retries)),
+    h("h3", null, "Roles"),
+    genome.roles.map(role => h("div", { key: role.name, className: "role" },
+      h("strong", null, role.name),
+      ` (${role.kind}, ${role.model})`,
+      h("ul", null, role.instructions.map((t, i) => h("li", { key: i }, t))))),
+    h("h3", null, "Lineage note"),
+    h(NoteText, { text: genome.mutation_note || "" }),
+    h("h3", null, "Changes from parent"),
+    diff.length
+      ? h("ul", null, diff.map((line, i) => h("li", { key: i }, line)))
+      : h("p", { className: "muted" }, "None. This is the seed, or its parent is not in the run."));
+}
+
+function summary(run) {
+  const ev = run.evaluations[run.champion_id];
+  const cfg = run.config;
+  const best = ev ? `champion fitness ${ev.fitness.toFixed(4)}` : "no champion fitness";
+  return `${run.backend} backend, seed ${cfg.seed}, population ${cfg.population}, ` +
+    `${cfg.generations} generations, ${best}`;
+}
+
+function App() {
+  const [runs, setRuns] = useState(null);
+  const [runName, setRunName] = useState("");
+  const [run, setRun] = useState(null);
+  const [selected, setSelected] = useState("");
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    getJson("api/runs").then(
+      list => { setRuns(list); if (list.length) setRunName(list[0].name); },
+      err => setError(err.message),
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!runName) return undefined;
+    let live = true;
+    setRun(null);
+    setSelected("");
+    setError(null);
+    getJson("api/runs/" + enc(runName)).then(
+      data => { if (live) { setRun(data); setSelected(data.champion_id); } },
+      err => { if (live) setError(err.message); },
+    );
+    return () => { live = false; };
+  }, [runName]);
+
+  if (error) return h("p", { className: "panel" }, error);
+  if (runs === null) return h("p", { className: "panel muted" }, "Loading runs...");
+  if (!runs.length) {
+    return h("p", { className: "panel" },
+      "No runs found. Create one with evorg run --out DIR, then restart evorg serve.");
+  }
+  return h("div", null,
+    h("header", null,
+      h("h1", null, "evorg lineage"),
+      h("label", null, "Run ",
+        h("select", { value: runName, onChange: e => setRunName(e.target.value) },
+          runs.map(r => h("option", { key: r.name, value: r.name }, r.name)))),
+      run && h("span", { className: "muted" }, summary(run))),
+    h("main", null,
+      h("section", null,
+        run
+          ? h(Tree, { nodes: run.tree, selected, onSelect: setSelected })
+          : h("p", { className: "muted" }, "Loading run..."),
+        h("p", { className: "legend" },
+          "Node colour is fitness: pale is low, dark is high. Orange lines mark the path from the " +
+          "champion back to the seed. Click or tab to a node for details.")),
+      h("aside", null,
+        h(Details, { runName, genomeId: selected, champion: run ? run.champion_id : null }))));
+}
+
+ReactDOM.createRoot(document.getElementById("app")).render(h(App));
+</script>
+</body>
+</html>

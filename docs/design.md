@@ -428,6 +428,32 @@ range 0 adds nothing; fronts of one or two points give `inf` to every point. Tie
 puts the lower front first, then the larger crowding distance, then the smaller key.
 `points_from_evaluations` uses the mapping key as the point key.
 
+### 4.11 `evorg.web`
+
+Optional extra: `pip install -e ".[web]"` (FastAPI and uvicorn). Read-only: the app never
+writes a run and never evolves one; it only reads `run.json` files.
+
+`web.app.create_app(runs_dir: Path) -> FastAPI` treats each subdirectory of `runs_dir` that
+holds a `run.json` as a run. Routes:
+
+* `GET /api/runs`: one summary per run (backend, seed, population, generations, champion id,
+  champion fitness), sorted by name.
+* `GET /api/runs/{name}`: the `run.json` content plus `tree`, one node per recorded genome with
+  its parents (only parents present in the file), generation, fitness, pass rate, cost, note,
+  and flags `is_champion` and `on_champion_path` (the champion and all of its ancestors).
+* `GET /api/runs/{name}/genomes/{id}`: the genome, its evaluation, and `diff_from_parent`
+  (`diff_genomes` against the first parent, empty if that parent is not in the file).
+* `GET /`: the single static page `web/static/index.html`. It loads React 18.3.1 from unpkg
+  and uses `React.createElement` with no build step.
+
+Unknown runs and genomes return 404 with a JSON `detail`. A run name must be one plain
+directory name (no `/`, no `..`, no leading dot), and a resolved path that leaves `runs_dir`
+(a symlink, say) is also 404.
+
+`evorg serve [--runs-dir runs] [--port 8000] [--host 127.0.0.1]` runs the app under uvicorn.
+It binds to localhost by default. Without the extra it prints the install command to stderr
+and exits 2.
+
 ## 5. Testing strategy
 
 * Unit tests per module, no network, no API key.
