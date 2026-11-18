@@ -88,7 +88,7 @@ def test_add_instruction_appends_and_sets_lineage():
     )
     assert child.parent_ids == (seed.genome_id,)
     assert child.generation == seed.generation + 1
-    assert child.mutation_note == "coder: + instruction 'Handle empty input explicitly.'"
+    assert child.mutation_note == "coder: + instruction 'Handle empty input explicitly.'. Why: why"
     assert child.genome_id != seed.genome_id
 
 
@@ -177,9 +177,14 @@ def test_set_retries_accepts_numeric_string_after_from_dict():
     assert mutated(rich_genome(), m).max_retries == 0
 
 
-def test_rationale_is_kept_but_not_part_of_describe():
+def test_rationale_goes_into_lineage_note_but_not_describe():
     m = Mutation("set_retries", value=2, rationale="cheap extra check")
     assert m.describe() == "max_retries -> 2"
+    assert mutated(seed_genome(), m).mutation_note == "max_retries -> 2. Why: cheap extra check"
+
+
+def test_blank_rationale_leaves_note_unchanged():
+    m = Mutation("set_retries", value=2, rationale="   ")
     assert mutated(seed_genome(), m).mutation_note == "max_retries -> 2"
 
 

@@ -209,7 +209,7 @@ def apply_mutation(genome: OrgGenome, m: Mutation) -> OrgGenome:
         max_retries=retries,
         parent_ids=(genome.genome_id,),
         generation=genome.generation + 1,
-        mutation_note=m.describe(),
+        mutation_note=_note(m),
     )
     try:
         child.validate()
@@ -478,3 +478,9 @@ class Architect:
                 break
             m = random_mutation(genome, self.rng)
         return m
+
+
+def _note(m: Mutation) -> str:
+    """Lineage note: what changed, plus the proposer's reason when it gave one."""
+    reason = m.rationale.strip()
+    return f"{m.describe()}. Why: {reason}" if reason else m.describe()
