@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import random
 from dataclasses import replace
 
@@ -9,8 +10,11 @@ import pytest
 
 from evorg.genes import INSTRUCTION_POOL
 from evorg.genome import OrgGenome, RoleSpec, seed_genome
+from evorg.llm.base import LLMRequest, LLMResponse
+from evorg.llm.simulated import SimulatedBackend
 from evorg.mutation import (
     OPS,
+    Architect,
     Mutation,
     MutationError,
     apply_mutation,
@@ -371,3 +375,211 @@ def test_random_mutation_returns_resolved_fields():
             assert m.value in ("small", "large")
         if m.op == "add_role":
             assert m.role is not None
+
+
+# --- architect ----------------------------------------------------------------------------
+
+
+class FakeBackend:
+    """Returns the scripted replies in order, one per call, and records the requests."""
+
+    name = "fake"
+
+    def __init__(self, *replies: str, cost: float = 0.01) -> None:
+        self.replies = list(replies)
+        self.cost = cost
+        self.requests: list[LLMRequest] = []
+
+    def complete(self, request: LLMRequest) -> LLMResponse:
+        self.requests.append(request)
+        text = self.replies.pop(0) if self.replies else ""
+        return LLMResponse(text=text, input_tokens=10, output_tokens=5, cost_usd=self.cost)
+
+
+ADD_EMPTY = {
+    "op": "add_instruction",
+    "role": "coder",
+    "value": "Handle empty input explicitly.",
+    "index": None,
+    "rationale": "empty input is a common edge case",
+}
+SET_RETRIES_2 = {"op": "set_retries", "role": None, "value": 2, "index": None, "rationale": "r"}
+GHOST = {"op": "remove_role", "role": "ghost", "value": None, "index": None, "rationale": ""}
+
+
+def _assert_applies(genome: OrgGenome, mutations: list[Mutation]) -> None:
+    for m in mutations:
+        apply_mutation(genome, m)
+
+
+def test_architect_request_carries_genome_role_kind_and_n():
+    backend = FakeBackend(json.dumps({"mutations": [ADD_EMPTY]}))
+    genome = rich_genome()
+    architect = Architect(backend, random.Random(0))
+    architect.propose(genome, "pass rate 0.5", n=1)
+    request = backend.requests[0]
+    assert request.role_kind == "architect"
+    assert request.model == "large"
+    assert request.metadata["genome"] == genome.to_dict()
+    assert request.metadata["n"] == 1
+    assert "Propose exactly 1 mutations" in request.prompt
+    assert "pass rate 0.5" in request.prompt
+    assert json.dumps(genome.to_dict(), indent=2) in request.prompt
+    for op in OPS:
+        assert op in request.prompt
+    assert "architect" in request.system
+
+
+def test_architect_model_is_configurable():
+    backend = FakeBackend()
+    Architect(backend, random.Random(0), model="small").propose(seed_genome(), "", n=1)
+    assert backend.requests[0].model == "small"
+
+
+@pytest.mark.parametrize("seed", range(30))
+def test_simulated_architect_with_one_mutation_always_applies(seed):
+    genome = seed_genome()
+    for parent in (genome, rich_genome()):
+        architect = Architect(SimulatedBackend(task_index={}, seed=seed), random.Random(seed))
+        out = architect.propose(parent, "report", n=1)
+        assert len(out) == 1
+        _assert_applies(parent, out)
+        assert architect.stats["calls"] == 1
+        assert architect.stats["valid"] == architect.stats["proposed"] == 1
+        assert architect.stats["fallback"] == 0
+        assert architect.stats["cost_usd"] > 0
+
+
+def test_simulated_architect_with_several_mutations_still_returns_exactly_n():
+    architect = Architect(SimulatedBackend(task_index={}, seed=4), random.Random(4))
+    out = architect.propose(rich_genome(), "report", n=3)
+    assert len(out) == 3
+    _assert_applies(rich_genome(), out)
+
+
+def test_garbage_reply_falls_back_to_random_mutations():
+    backend = FakeBackend("I think you should add a tester!")
+    architect = Architect(backend, random.Random(1))
+    out = architect.propose(seed_genome(), "report", n=2)
+    assert len(out) == 2
+    _assert_applies(seed_genome(), out)
+    assert architect.stats["proposed"] == 0
+    assert architect.stats["valid"] == 0
+    assert architect.stats["fallback"] == 2
+
+
+def test_fenced_json_block_is_parsed():
+    reply = (
+        "Here is my proposal:\n```json\n"
+        + json.dumps({"mutations": [ADD_EMPTY]})
+        + "\n```\nGood luck."
+    )
+    architect = Architect(FakeBackend(reply), random.Random(0))
+    out = architect.propose(seed_genome(), "report", n=1)
+    assert out[0].op == "add_instruction"
+    assert out[0].value == "Handle empty input explicitly."
+    assert architect.stats["fallback"] == 0
+
+
+def test_bare_fence_without_language_is_parsed():
+    reply = "```\n" + json.dumps([SET_RETRIES_2]) + "\n```"
+    architect = Architect(FakeBackend(reply), random.Random(0))
+    out = architect.propose(seed_genome(), "report", n=1)
+    assert out[0].op == "set_retries" and out[0].value == 2
+    assert architect.stats["fallback"] == 0
+
+
+def test_bare_list_is_accepted():
+    architect = Architect(FakeBackend(json.dumps([SET_RETRIES_2])), random.Random(0))
+    out = architect.propose(seed_genome(), "report", n=1)
+    assert out == [Mutation.from_dict(SET_RETRIES_2)]
+    assert architect.stats["fallback"] == 0
+
+
+def test_json_inside_prose_is_found_by_braces():
+    reply = "Sure! " + json.dumps({"mutations": [SET_RETRIES_2]}) + " Thanks."
+    architect = Architect(FakeBackend(reply), random.Random(0))
+    assert architect.propose(seed_genome(), "report", n=1)[0].value == 2
+
+
+def test_partially_invalid_list_keeps_the_valid_ones():
+    reply = json.dumps({"mutations": [GHOST, "junk", SET_RETRIES_2, ADD_EMPTY]})
+    architect = Architect(FakeBackend(reply), random.Random(0))
+    out = architect.propose(seed_genome(), "report", n=2)
+    assert [m.op for m in out] == ["set_retries", "add_instruction"]
+    _assert_applies(seed_genome(), out)
+    assert architect.stats["proposed"] == 4
+    assert architect.stats["valid"] == 2
+    assert architect.stats["fallback"] == 0
+
+
+def test_shortfall_is_topped_up_to_exactly_n():
+    reply = json.dumps({"mutations": [GHOST, SET_RETRIES_2]})
+    architect = Architect(FakeBackend(reply), random.Random(2))
+    out = architect.propose(seed_genome(), "report", n=3)
+    assert len(out) == 3
+    _assert_applies(seed_genome(), out)
+    assert out[0].op == "set_retries"
+    assert architect.stats["valid"] == 1
+    assert architect.stats["fallback"] == 2
+
+
+def test_duplicate_proposals_yield_distinct_children():
+    reply = json.dumps({"mutations": [SET_RETRIES_2, SET_RETRIES_2]})
+    architect = Architect(FakeBackend(reply), random.Random(5))
+    out = architect.propose(seed_genome(), "report", n=2)
+    ids = {apply_mutation(seed_genome(), m).genome_id for m in out}
+    assert len(ids) == 2
+    assert architect.stats["valid"] == 2
+    assert architect.stats["fallback"] == 1
+
+
+def test_stats_accumulate_across_calls():
+    backend = FakeBackend(
+        json.dumps({"mutations": [SET_RETRIES_2]}),
+        "no json here",
+        cost=0.25,
+    )
+    architect = Architect(backend, random.Random(0))
+    architect.propose(seed_genome(), "report", n=1)
+    architect.propose(seed_genome(), "report", n=1)
+    assert architect.stats["calls"] == 2
+    assert architect.stats["proposed"] == 1
+    assert architect.stats["valid"] == 1
+    assert architect.stats["fallback"] == 1
+    assert architect.stats["cost_usd"] == pytest.approx(0.5)
+
+
+def test_non_list_mutations_value_is_ignored():
+    reply = '{"mutations": 5}'
+    architect = Architect(FakeBackend(reply), random.Random(0))
+    out = architect.propose(seed_genome(), "report", n=1)
+    assert len(out) == 1
+    assert architect.stats["proposed"] == 0
+    assert architect.stats["fallback"] == 1
+
+
+def test_proposal_that_only_applies_as_a_chain_is_dropped():
+    # The second item only makes sense after the first; applied alone it is refused.
+    chain = [
+        {"op": "add_role", "role": "tester", "value": "tester"},
+        {"op": "add_instruction", "role": "tester", "value": "Check edge cases."},
+    ]
+    architect = Architect(FakeBackend(json.dumps({"mutations": chain})), random.Random(0))
+    out = architect.propose(seed_genome(), "report", n=2)
+    assert out[0].op == "add_role"
+    assert architect.stats["valid"] == 1
+    assert architect.stats["fallback"] == 1
+
+
+def test_add_role_without_name_is_named_before_it_is_returned():
+    proposal = {"op": "add_role", "role": None, "value": "planner", "index": None}
+    architect = Architect(FakeBackend(json.dumps({"mutations": [proposal]})), random.Random(0))
+    out = architect.propose(seed_genome(), "report", n=1)
+    assert out[0].role == "planner"
+    assert out[0].describe() == "+ role planner (planner)"
+
+
+def test_propose_rejects_non_positive_n():
+    with pytest.raises(ValueError):
+        Architect(FakeBackend(), random.Random(0)).propose(seed_genome(), "", n=0)

@@ -8,12 +8,24 @@ mutations lives further down this module.
 
 from __future__ import annotations
 
+import json
 import random
+import re
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from typing import Any
 
 from evorg.genes import INSTRUCTION_POOL, MODEL_TIERS, ROLE_KINDS
-from evorg.genome import MAX_RETRIES, GenomeError, OrgGenome, RoleSpec
+from evorg.genome import (
+    MAX_INSTRUCTION_CHARS,
+    MAX_INSTRUCTIONS,
+    MAX_RETRIES,
+    MAX_ROLES,
+    GenomeError,
+    OrgGenome,
+    RoleSpec,
+)
+from evorg.llm.base import LLMBackend, LLMRequest
 
 OPS: tuple[str, ...] = (
     "add_instruction",
@@ -315,3 +327,154 @@ def _coerce_int(value: Any) -> int | None:
         except ValueError:
             return None
     return None
+
+
+# --- architect ----------------------------------------------------------------------------
+
+_SYSTEM = (
+    "You are the architect of an AI software team. You propose changes to the team's roles, "
+    "instructions, model tiers and retry budget that will raise the pass rate on a coding "
+    "benchmark without wasting cost. Reply with JSON only, no prose."
+)
+
+_SCHEMA = """\
+Each mutation is an object with the keys "op", "role", "value", "index" and "rationale".
+Use null for a key that an op does not need. The ops are:
+- add_instruction: role = role name; value = instruction text, appended to that role.
+- remove_instruction: role = role name; index = 0-based position of the instruction to drop.
+- replace_instruction: role = role name; index = 0-based position; value = new instruction text.
+- add_role: value = kind (planner, tester or reviewer); role = name for the new role.
+  The new role starts with no instructions on the small tier. Planners run before the coder.
+- remove_role: role = name of a role to remove (never the coder).
+- change_model: role = role name; value = small or large.
+- set_retries: value = integer retry budget; role and index are null.
+"rationale" is one sentence saying why the change should help."""
+
+
+def _limits() -> list[str]:
+    return [
+        f"between 1 and {MAX_ROLES} roles; role names unique and non-empty",
+        "kinds: planner, coder, tester, reviewer",
+        "exactly one coder; at most 2 planners, 1 tester and 1 reviewer",
+        "models: small or large",
+        f"at most {MAX_INSTRUCTIONS} instructions per role, each 1 to {MAX_INSTRUCTION_CHARS} "
+        "characters, no duplicates within a role",
+        f"max_retries between 0 and {MAX_RETRIES}",
+    ]
+
+
+def _build_prompt(genome: OrgGenome, report: str, n: int) -> str:
+    limits = "\n".join(f"- {line}" for line in _limits())
+    return "\n\n".join(
+        [
+            "Current organization (genome JSON):",
+            json.dumps(genome.to_dict(), indent=2),
+            "Evaluation report:",
+            report.strip() or "(no report)",
+            "Mutation schema:",
+            _SCHEMA,
+            "Validation limits the organization must stay within:",
+            limits,
+            f'Propose exactly {n} mutations as {{"mutations": [...]}}. Each one is an '
+            "independent alternative applied to the current organization above, not a step "
+            "in a chain. Reply with JSON only.",
+        ]
+    )
+
+
+_FENCE = re.compile(r"```[ \t]*(?:json)?[ \t]*\n?(.*?)```", re.DOTALL | re.IGNORECASE)
+
+
+def _candidate_texts(text: str) -> Iterator[str]:
+    """Strings that might hold the JSON, most likely first."""
+    yield text.strip()
+    for match in _FENCE.finditer(text):
+        yield match.group(1).strip()
+    for opener, closer in (("{", "}"), ("[", "]")):
+        start, end = text.find(opener), text.rfind(closer)
+        if 0 <= start < end:
+            yield text[start : end + 1]
+
+
+def _parse_items(text: str) -> list[Any]:
+    """The mutation dicts in an LLM reply, or [] when no JSON with mutations is found."""
+    for candidate in _candidate_texts(text):
+        try:
+            data = json.loads(candidate)
+        except ValueError:
+            continue
+        if isinstance(data, dict) and isinstance(data.get("mutations"), list):
+            return data["mutations"]
+        if isinstance(data, list):
+            return data
+    return []
+
+
+class Architect:
+    """Asks a large-model backend for mutations and keeps only those that apply.
+
+    Each proposal is treated as an independent alternative applied to the same parent. Any
+    shortfall is topped up with ``random_mutation``, so ``propose`` always returns exactly ``n``.
+    ``stats`` accumulates across calls: ``calls``, ``proposed`` (items found in replies),
+    ``valid`` (items that applied to the parent), ``fallback`` (random top-ups) and
+    ``cost_usd``. Malformed output never raises; errors from the backend itself propagate.
+    """
+
+    def __init__(self, backend: LLMBackend, rng: random.Random, model: str = "large") -> None:
+        self.backend = backend
+        self.rng = rng
+        self.model = model
+        self.stats: dict[str, Any] = {
+            "calls": 0,
+            "proposed": 0,
+            "valid": 0,
+            "fallback": 0,
+            "cost_usd": 0.0,
+        }
+
+    def propose(self, genome: OrgGenome, report: str, n: int = 1) -> list[Mutation]:
+        """Return exactly ``n`` mutations that each apply to ``genome``."""
+        if n < 1:
+            raise ValueError(f"n must be at least 1, got {n}")
+        request = LLMRequest(
+            role_kind="architect",
+            model=self.model,
+            system=_SYSTEM,
+            prompt=_build_prompt(genome, report, n),
+            metadata={"genome": genome.to_dict(), "n": n},
+        )
+        response = self.backend.complete(request)
+        self.stats["calls"] += 1
+        self.stats["cost_usd"] += float(response.cost_usd)
+
+        items = _parse_items(response.text)
+        self.stats["proposed"] += len(items)
+
+        chosen: list[Mutation] = []
+        seen: set[str] = set()
+        for item in items:
+            try:
+                m = resolve(genome, Mutation.from_dict(item))
+                child_id = apply_mutation(genome, m).genome_id
+            except (MutationError, TypeError, ValueError):
+                continue
+            self.stats["valid"] += 1
+            if len(chosen) < n and child_id not in seen:
+                chosen.append(m)
+                seen.add(child_id)
+
+        while len(chosen) < n:
+            m = self._top_up(genome, seen)
+            chosen.append(m)
+            seen.add(apply_mutation(genome, m).genome_id)
+            self.stats["fallback"] += 1
+        return chosen
+
+    def _top_up(self, genome: OrgGenome, seen: set[str]) -> Mutation:
+        """A random mutation whose child is not already in ``seen``, when one can be found."""
+        m = random_mutation(genome, self.rng)
+        for _ in range(RANDOM_TRIES):
+            if apply_mutation(genome, m).genome_id not in seen:
+                break
+            m = random_mutation(genome, self.rng)
+        return m
