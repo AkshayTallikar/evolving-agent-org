@@ -100,7 +100,7 @@ and ends with a four-role team:
 | 6          | 0.9768       | 100.0%         |
 
 Best fitness: ▁▃▅▆▆▆███
-Held-out: seed 25.0% -> champion 100.0%
+Held-out (unseen simulator seed): seed 0.0% -> champion 75.0%
 ```
 
 The lineage shows how it got there, including a mistake it recovered from:
