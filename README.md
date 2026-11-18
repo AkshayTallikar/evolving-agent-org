@@ -68,6 +68,9 @@ pip install -e ".[dev]"
 # evolve on the offline simulator (free, deterministic, a few seconds)
 evorg run --backend sim --generations 8 --population 8 --seed 3
 
+# score each genome over 3 simulator seeds (less luck, 3x the work)
+evorg run --backend sim --generations 8 --population 8 --seed 3 --eval-seeds 3
+
 # re-render a saved run
 evorg show runs/sim-seed3
 
@@ -117,19 +120,20 @@ generation more than made up for it. The champion it saved is in
 
 ## Results, honestly
 
-The headline numbers above come from one run, scored with the same simulator seed that
-selection used. [scripts/robustness.py](scripts/robustness.py) re-scores the champions of 10
-runs on 20 simulator seeds they never saw:
+The headline numbers above come from one run. [scripts/robustness.py](scripts/robustness.py)
+re-scores the champions of 10 runs on 20 simulator seeds they never saw:
 
 |  | train tasks | held-out tasks |
 | --- | --- | --- |
 | seed genome (one coder) | 42.5% | 37.5% |
-| champions, scored in their own run | 88.8% | - |
-| champions, scored on fresh noise | **68.0%** | **69.4%** |
+| champions, one scoring seed, scored in their own run | 88.8% | - |
+| champions, one scoring seed, scored on fresh noise | 68.0% | 69.4% |
+| champions, `--eval-seeds 3`, scored on fresh noise | **78.2%** | **73.9%** |
 
-Evolution clearly works: champions nearly double the seed's held-out pass rate. Part of the
-in-run score is also luck, since selection fits the noise of its own seed. That gap is
-[issue #21](https://github.com/AkshayTallikar/evolving-agent-org/issues/21).
+Evolution clearly works: champions roughly double the seed's held-out pass rate. With a single
+scoring seed, part of the in-run score is luck, because selection fits that seed's noise.
+Averaging each genome over three simulator seeds (`--eval-seeds 3`) cuts that gap and gives
+champions that hold up better on unseen noise, at three times the evaluation cost.
 
 Other patterns across seeds: champions almost always add a tester or reviewer and an
 edge-case instruction. Neutral instructions like "keep functions under 30 lines" drift along
@@ -155,7 +159,6 @@ Python 3.11, 3.12 and 3.13. See the
 ## Roadmap (milestone 2)
 
 - [#10](https://github.com/AkshayTallikar/evolving-agent-org/issues/10) Evolve on real models
-- [#21](https://github.com/AkshayTallikar/evolving-agent-org/issues/21) Score genomes over several simulator seeds
 - [#12](https://github.com/AkshayTallikar/evolving-agent-org/issues/12) Pareto selection on pass rate and cost
 - [#11](https://github.com/AkshayTallikar/evolving-agent-org/issues/11) Crossover between organizations
 - [#13](https://github.com/AkshayTallikar/evolving-agent-org/issues/13) Parallel evaluation
