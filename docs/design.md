@@ -474,6 +474,9 @@ holds a `run.json` as a run. Routes:
   and flags `is_champion` and `on_champion_path` (the champion and all of its ancestors).
 * `GET /api/runs/{name}/genomes/{id}`: the genome, its evaluation, and `diff_from_parent`
   (`diff_genomes` against the first parent, empty if that parent is not in the file).
+* `GET /api/runs/{name}/frontier`: one point per evaluated genome (pass rate, mean cost, fitness)
+  with `on_frontier` and `is_champion` flags, plus the frontier ids cheapest first. It uses the
+  file's `frontier` list, or computes the front from the evaluations when an older file lacks it.
 * `GET /`: the single static page `web/static/index.html`. It loads React 18.3.1 from unpkg
   and uses `React.createElement` with no build step.
 

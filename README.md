@@ -88,7 +88,8 @@ pytest          # runs offline, no API key needed
 
 To browse runs as a family tree, install the web extra and serve the runs folder. Click any
 organization to see its roles, scores, the architect's reason for the change and the diff
-from its parent:
+from its parent. Below the tree, a chart plots every evaluated organization by pass rate and
+mean cost per task, draws the Pareto frontier and marks the champion; clicking a point selects it.
 
 ```bash
 pip install -e ".[web]"

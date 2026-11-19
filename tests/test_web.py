@@ -263,3 +263,97 @@ def test_serve_without_uvicorn_exits_2(
     monkeypatch.setitem(sys.modules, "uvicorn", None)
     assert main(["serve"]) == EXIT_USAGE
     assert 'install the web extra: pip install -e ".[web]"' in capsys.readouterr().err
+
+
+def test_frontier_flags_match_run_json(client: TestClient, run_json: dict[str, Any]) -> None:
+    from evorg import pareto
+
+    body = client.get("/api/runs/tiny/frontier").json()
+    assert body["name"] == "tiny"
+    assert body["champion_id"] == run_json["champion_id"]
+    points = {row["id"]: row for row in body["points"]}
+    assert set(points) == set(run_json["evaluations"])
+    for gid, row in points.items():
+        ev = run_json["evaluations"][gid]
+        assert row["pass_rate"] == ev["pass_rate"]
+        assert row["mean_cost_usd"] == ev["mean_cost_usd"]
+        assert row["fitness"] == ev["fitness"]
+        assert row["is_champion"] == (gid == run_json["champion_id"])
+        assert row["on_frontier"] == (gid in run_json["frontier"])
+    assert [row["id"] for row in body["points"] if row["is_champion"]] == [run_json["champion_id"]]
+    assert set(body["frontier"]) == set(run_json["frontier"])
+    costs = [points[gid]["mean_cost_usd"] for gid in body["frontier"]]
+    assert costs == sorted(costs), "frontier ids are cheapest first"
+    computed = pareto.frontier([
+        pareto.Point(gid, ev["pass_rate"], ev["mean_cost_usd"])
+        for gid, ev in run_json["evaluations"].items()
+    ])
+    assert body["frontier"] == [point.key for point in computed]
+
+
+def test_frontier_is_computed_for_old_run_json_without_frontier_key(
+    runs_dir: Path, run_json: dict[str, Any]
+) -> None:
+    path = runs_dir / "tiny" / "run.json"
+    del run_json["frontier"]
+    path.write_text(json.dumps(run_json))
+    client = TestClient(create_app(runs_dir))
+    assert client.get("/api/runs/tiny").status_code == 200
+    body = client.get("/api/runs/tiny/frontier").json()
+    assert body["frontier"] == sorted(
+        body["frontier"], key=lambda gid: (points_cost(body, gid), gid)
+    )
+    assert {row["id"] for row in body["points"] if row["on_frontier"]} == set(body["frontier"])
+    assert body["frontier"]
+    assert all(row["on_frontier"] for row in body["points"] if row["id"] in body["frontier"])
+
+
+def points_cost(body: dict[str, Any], gid: str) -> float:
+    return next(row["mean_cost_usd"] for row in body["points"] if row["id"] == gid)
+
+
+def test_frontier_small_run_drops_dominated_points(tmp_path: Path) -> None:
+    from evorg.web.app import frontier_view
+
+    data = {
+        "champion_id": "a",
+        "evaluations": {
+            "a": {"pass_rate": 0.9, "mean_cost_usd": 0.5, "fitness": 0.9},
+            "b": {"pass_rate": 0.8, "mean_cost_usd": 0.1, "fitness": 0.7},
+            "c": {"pass_rate": 0.7, "mean_cost_usd": 0.6, "fitness": 0.5},  # dominated by a
+            "d": {"pass_rate": None, "mean_cost_usd": 0.05, "fitness": None},  # not scorable
+        },
+    }
+    view = frontier_view(data)
+    flags = {row["id"]: row["on_frontier"] for row in view["points"]}
+    assert flags == {"a": True, "b": True, "c": False, "d": False}
+    assert view["frontier"] == ["b", "a"]
+    assert [row["id"] for row in view["points"] if row["is_champion"]] == ["a"]
+
+    data["frontier"] = ["c"]
+    assert {row["id"]: row["on_frontier"] for row in frontier_view(data)["points"]}["c"] is True
+
+
+def test_frontier_of_run_without_evaluations_is_empty(runs_dir: Path) -> None:
+    (runs_dir / "bare").mkdir()
+    (runs_dir / "bare" / "run.json").write_text(json.dumps({"genomes": {}, "champion_id": None}))
+    client = TestClient(create_app(runs_dir))
+    assert client.get("/api/runs/bare/frontier").json() == {
+        "name": "bare",
+        "champion_id": None,
+        "frontier": [],
+        "points": [],
+    }
+
+
+def test_unknown_run_frontier_is_404_with_json_detail(client: TestClient) -> None:
+    resp = client.get("/api/runs/missing/frontier")
+    assert resp.status_code == 404
+    assert "detail" in resp.json()
+
+
+@pytest.mark.parametrize("name", ["%2E%2E", ".hidden", "a..b", "x%5Cy"])
+def test_frontier_rejects_unsafe_run_names(client: TestClient, name: str) -> None:
+    resp = client.get(f"/api/runs/{name}/frontier")
+    assert resp.status_code == 404
+    assert resp.headers["content-type"].startswith("application/json")

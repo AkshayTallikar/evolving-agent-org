@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
+from evorg import pareto
 from evorg.genome import OrgGenome, diff_genomes
 
 RUN_FILE = "run.json"
@@ -47,6 +48,12 @@ def create_app(runs_dir: Path) -> FastAPI:
         """The run.json content plus a ``tree`` of nodes for the family view."""
         data = _load_run(root, name)
         return {**data, "tree": build_tree(data)}
+
+    @app.get("/api/runs/{name}/frontier")
+    def get_frontier(name: str) -> dict[str, Any]:
+        """Every evaluated genome with its cost and quality, and the Pareto frontier over them."""
+        data = _load_run(root, name)
+        return {"name": name, **frontier_view(data)}
 
     @app.get("/api/runs/{name}/genomes/{genome_id}")
     def get_genome(name: str, genome_id: str) -> dict[str, Any]:
@@ -102,6 +109,46 @@ def build_tree(data: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return nodes
+
+
+def frontier_view(data: dict[str, Any]) -> dict[str, Any]:
+    """Points for every evaluated genome, plus the frontier ids, cheapest first.
+
+    ``on_frontier`` comes from the run's own ``frontier`` list when run.json has one. Older files
+    lack it, so the frontier is computed from the evaluations instead. Evaluations without a
+    numeric pass rate and cost are listed but never count toward the frontier.
+    """
+    evaluations = data.get("evaluations", {})
+    champion_id = data.get("champion_id")
+    if "frontier" in data:
+        front_ids = set(data["frontier"])
+    else:
+        scorable = [
+            pareto.Point(key=gid, pass_rate=float(ev["pass_rate"]), cost=float(ev["mean_cost_usd"]))
+            for gid, ev in evaluations.items()
+            if _is_number(ev.get("pass_rate")) and _is_number(ev.get("mean_cost_usd"))
+        ]
+        front_ids = {point.key for point in pareto.frontier(scorable)}
+    points = [
+        {
+            "id": gid,
+            "pass_rate": ev.get("pass_rate"),
+            "mean_cost_usd": ev.get("mean_cost_usd"),
+            "fitness": ev.get("fitness"),
+            "on_frontier": gid in front_ids,
+            "is_champion": gid == champion_id,
+        }
+        for gid, ev in sorted(evaluations.items())
+    ]
+    frontier_ids = sorted(
+        (p["id"] for p in points if p["on_frontier"]),
+        key=lambda gid: (evaluations[gid].get("mean_cost_usd") or 0.0, gid),
+    )
+    return {"champion_id": champion_id, "frontier": frontier_ids, "points": points}
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
 
 
 def champion_path(genomes: dict[str, Any], champion_id: str | None) -> set[str]:
