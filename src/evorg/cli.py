@@ -156,6 +156,13 @@ def _add_config_flags(parser: argparse.ArgumentParser) -> None:
         help="fitness also subtracts this times the genome's instructions and extra roles "
         "(0 or more, default 0 = off)",
     )
+    parser.add_argument(
+        "--diversity",
+        choices=["none", "crowding"],
+        default=default_config.diversity,
+        help="none: plain elitism and tournaments; crowding: a child replaces its most "
+        "similar parent only if fitter (not with --selection pareto)",
+    )
 
 
 def _config_from_args(args: argparse.Namespace) -> EvolutionConfig:
@@ -169,6 +176,7 @@ def _config_from_args(args: argparse.Namespace) -> EvolutionConfig:
         crossover_rate=args.crossover_rate,
         selection=args.selection,
         complexity_weight=args.complexity_weight,
+        diversity=args.diversity,
     )
 
 
