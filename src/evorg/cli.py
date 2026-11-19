@@ -15,7 +15,13 @@ import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from evorg.ablation import ablate, champion_and_seed, render_ablation, seed_offsets
+from evorg.ablation import (
+    ablate,
+    champion_and_seed,
+    complexity_weight_of,
+    render_ablation,
+    seed_offsets,
+)
 from evorg.bench import load_benchmark, task_index
 from evorg.evolution import (
     EvolutionConfig,
@@ -143,6 +149,13 @@ def _add_config_flags(parser: argparse.ArgumentParser) -> None:
         default=default_config.selection,
         help="rank genomes by fitness (scalar) or by Pareto front and crowding (pareto)",
     )
+    parser.add_argument(
+        "--complexity-weight",
+        type=float,
+        default=default_config.complexity_weight,
+        help="fitness also subtracts this times the genome's instructions and extra roles "
+        "(0 or more, default 0 = off)",
+    )
 
 
 def _config_from_args(args: argparse.Namespace) -> EvolutionConfig:
@@ -155,6 +168,7 @@ def _config_from_args(args: argparse.Namespace) -> EvolutionConfig:
         workers=args.workers,
         crossover_rate=args.crossover_rate,
         selection=args.selection,
+        complexity_weight=args.complexity_weight,
     )
 
 
@@ -410,13 +424,20 @@ def _cmd_ablate(args: argparse.Namespace) -> int:
     try:
         data = json.loads(path.read_text())
         champion, seed, cost_weight = champion_and_seed(data)
+        complexity_weight = complexity_weight_of(data)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         print(f"error: cannot load run from {path}: {exc}", file=sys.stderr)
         return EXIT_ERROR
     seeds = seed_offsets(data["config"]["seed"], args.split, args.seeds)
     print(f"ablate: scoring the champion and its variants on {args.split}", file=sys.stderr)
     result = ablate(
-        champion, seed, load_benchmark(args.split), seeds, cost_weight, split=args.split
+        champion,
+        seed,
+        load_benchmark(args.split),
+        seeds,
+        cost_weight,
+        split=args.split,
+        complexity_weight=complexity_weight,
     )
     report = render_ablation(result)
     if args.out:

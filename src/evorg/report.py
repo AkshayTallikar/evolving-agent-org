@@ -44,12 +44,16 @@ def render_markdown(run: RunResult) -> str:
     seeds_note = f"scored over {cfg.eval_seeds} simulator seeds, " if cfg.eval_seeds > 1 else ""
     crossover_note = f"crossover rate {cfg.crossover_rate:g}, " if cfg.crossover_rate > 0 else ""
     selection_note = "pareto selection, " if cfg.selection == "pareto" else ""
+    complexity_note = (
+        f"complexity weight {cfg.complexity_weight:g}, " if cfg.complexity_weight > 0 else ""
+    )
     lines: list[str] = [
         "# evorg run",
         "",
         (
             f"Backend {run.backend}, seed {cfg.seed}, population {cfg.population}, "
             f"generations {cfg.generations}, {seeds_note}{crossover_note}{selection_note}"
+            f"{complexity_note}"
             f"{len(run.evaluations)} genomes "
             f"evaluated, architect proposals valid {valid}/proposed {proposed}."
         ),

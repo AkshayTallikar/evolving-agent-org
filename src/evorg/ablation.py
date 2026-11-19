@@ -181,6 +181,11 @@ def champion_and_seed(data: dict) -> tuple[OrgGenome, OrgGenome, float]:
     return champion, seed, float(data["config"]["cost_weight"])
 
 
+def complexity_weight_of(data: dict) -> float:
+    """The parsimony weight from a saved run.json dict; 0 when the run did not record one."""
+    return float(data["config"].get("complexity_weight", 0.0))
+
+
 def _interval(a: Sequence[float], b: Sequence[float]) -> Delta:
     diffs = [x - y for x, y in zip(a, b, strict=True)]
     low, high = paired_bootstrap_ci(a, b, level=CI_LEVEL, seed=CI_BOOTSTRAP_SEED)
@@ -269,11 +274,13 @@ def ablate(
     seeds: Sequence[int],
     cost_weight: float,
     split: str = "custom",
+    complexity_weight: float = 0.0,
 ) -> AblationResult:
     """Score ``champion`` and each of its single-gene variants on ``tasks`` for each seed.
 
     Each variant's deltas are taken against the champion on the same (seed, task) pairs. Rows
     come back sorted by fitness change, most harmful removal first, ties broken by name.
+    ``complexity_weight`` is the run's parsimony weight, so fitness matches the run's own.
     """
     if not seeds:
         raise ValueError("ablate needs at least one simulator seed")
@@ -284,7 +291,14 @@ def ablate(
 
     def score(genome: OrgGenome) -> list[Evaluation]:
         return [
-            evaluate(genome, tasks, SimulatedBackend(index, seed=s), cost_weight) for s in seeds
+            evaluate(
+                genome,
+                tasks,
+                SimulatedBackend(index, seed=s),
+                cost_weight,
+                complexity_weight=complexity_weight,
+            )
+            for s in seeds
         ]
 
     champ_evs = score(champion)
