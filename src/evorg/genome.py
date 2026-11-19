@@ -107,6 +107,10 @@ class OrgGenome:
     def roles_of_kind(self, kind: str) -> tuple[RoleSpec, ...]:
         return tuple(role for role in self.roles if role.kind == kind)
 
+    def size(self) -> int:
+        """Complexity for the parsimony penalty: instructions over all roles, plus extra roles."""
+        return sum(len(role.instructions) for role in self.roles) + len(self.roles) - 1
+
     def validate(self) -> None:
         """Check every rule in design section 4.2. Raises GenomeError on the first failure."""
         if not 1 <= len(self.roles) <= MAX_ROLES:

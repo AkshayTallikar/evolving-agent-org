@@ -151,10 +151,10 @@ def test_no_genome_is_evaluated_twice(monkeypatch):
     evaluated: list[str] = []
     real_evaluate = evolution.evaluate
 
-    def counting_evaluate(genome, tasks, backend, cost_weight):
+    def counting_evaluate(genome, tasks, backend, cost_weight, **kwargs):
         if tasks and tasks[0].split == "train":
             evaluated.append(genome.genome_id)
-        return real_evaluate(genome, tasks, backend, cost_weight)
+        return real_evaluate(genome, tasks, backend, cost_weight, **kwargs)
 
     monkeypatch.setattr(evolution, "evaluate", counting_evaluate)
     result = run_simulated(EvolutionConfig(population=6, generations=4, seed=0))

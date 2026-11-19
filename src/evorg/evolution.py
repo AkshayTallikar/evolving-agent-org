@@ -9,6 +9,7 @@ choice that could vary is ordered by a ranking key, so a run depends only on its
 
 from __future__ import annotations
 
+import math
 import random
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -46,6 +47,8 @@ class EvolutionConfig:
     workers: int = 1  # tasks graded or called at once; never changes the results
     crossover_rate: float = 0.0  # chance that a child is bred by crossover, not mutation
     selection: str = "scalar"  # "scalar": rank by fitness; "pareto": rank by front, then crowding
+    # fitness also subtracts complexity_weight * OrgGenome.size(); 0 turns the penalty off
+    complexity_weight: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -148,6 +151,9 @@ def _config_dict(config: EvolutionConfig) -> dict[str, Any]:
     """The config as saved in run.json. ``workers`` is left out: it changes only the speed."""
     data = asdict(config)
     data.pop("workers")
+    if data["complexity_weight"] == 0:
+        # Left out at its default, so runs that do not use the penalty save the same run.json.
+        data.pop("complexity_weight")
     return data
 
 
@@ -176,7 +182,10 @@ def _check_workers(workers: int) -> None:
 
 
 def _summarise(
-    genome: OrgGenome, results: tuple[TaskResult, ...], cost_weight: float
+    genome: OrgGenome,
+    results: tuple[TaskResult, ...],
+    cost_weight: float,
+    complexity_weight: float = 0.0,
 ) -> Evaluation:
     n = len(results)
     pass_rate = sum(1 for r in results if r.passed) / n if n else 0.0
@@ -185,7 +194,7 @@ def _summarise(
         genome_id=genome.genome_id,
         pass_rate=pass_rate,
         mean_cost_usd=mean_cost,
-        fitness=pass_rate - cost_weight * mean_cost,
+        fitness=pass_rate - cost_weight * mean_cost - complexity_weight * genome.size(),
         results=results,
     )
 
@@ -196,13 +205,15 @@ def evaluate(
     backend: LLMBackend,
     cost_weight: float,
     workers: int = 1,
+    complexity_weight: float = 0.0,
 ) -> Evaluation:
     """Run ``genome`` on every task and score it.
 
     ``pass_rate`` is the share of tasks passed, ``mean_cost_usd`` the mean cost per task, and
-    ``fitness = pass_rate - cost_weight * mean_cost_usd``. Nothing is rounded. With
-    ``workers > 1`` up to that many tasks run on a thread pool; ``results`` stay in task order,
-    so the Evaluation is the same as with one worker, as long as the backend is thread-safe.
+    ``fitness = pass_rate - cost_weight * mean_cost_usd - complexity_weight * genome.size()``.
+    Nothing is rounded. With ``workers > 1`` up to that many tasks run on a thread pool;
+    ``results`` stay in task order, so the Evaluation is the same as with one worker, as long
+    as the backend is thread-safe.
     """
     _check_workers(workers)
     if workers == 1:
@@ -210,7 +221,7 @@ def evaluate(
     else:
         with ThreadPoolExecutor(max_workers=workers) as pool:
             results = tuple(pool.map(lambda task: run_task(genome, task, backend), tasks))
-    return _summarise(genome, results, cost_weight)
+    return _summarise(genome, results, cost_weight, complexity_weight)
 
 
 def _run_grid(
@@ -233,6 +244,7 @@ def evaluate_many(
     backends: Sequence[LLMBackend],
     cost_weight: float,
     workers: int = 1,
+    complexity_weight: float = 0.0,
 ) -> Evaluation:
     """Score ``genome`` on ``tasks`` once per backend and average the scores.
 
@@ -244,12 +256,17 @@ def evaluate_many(
         raise ValueError("evaluate_many needs at least one backend")
     _check_workers(workers)
     if len(backends) == 1 and workers == 1:
-        return evaluate(genome, tasks, backends[0], cost_weight)
+        return evaluate(
+            genome, tasks, backends[0], cost_weight, complexity_weight=complexity_weight
+        )
     if workers == 1:
-        evals = [evaluate(genome, tasks, backend, cost_weight) for backend in backends]
+        evals = [
+            evaluate(genome, tasks, backend, cost_weight, complexity_weight=complexity_weight)
+            for backend in backends
+        ]
     else:
         grid = _run_grid(genome, tasks, backends, workers)
-        evals = [_summarise(genome, results, cost_weight) for results in grid]
+        evals = [_summarise(genome, results, cost_weight, complexity_weight) for results in grid]
     n = len(evals)
     return Evaluation(
         genome_id=genome.genome_id,
@@ -311,6 +328,11 @@ def _validate_config(config: EvolutionConfig) -> None:
         raise ValueError(
             f"selection must be 'scalar' or 'pareto', got {config.selection!r}"
         )
+    if not (math.isfinite(config.complexity_weight) and config.complexity_weight >= 0):
+        raise ValueError(
+            "complexity_weight must be a finite number of 0 or more, "
+            f"got {config.complexity_weight}"
+        )
 
 
 def _as_backends(backend: LLMBackend | Sequence[LLMBackend]) -> list[LLMBackend]:
@@ -349,7 +371,12 @@ def evolve(
     def ensure_evaluated(genome: OrgGenome) -> None:
         if genome.genome_id not in evaluations:
             evaluations[genome.genome_id] = evaluate_many(
-                genome, train, train_backends, config.cost_weight, workers=config.workers
+                genome,
+                train,
+                train_backends,
+                config.cost_weight,
+                workers=config.workers,
+                complexity_weight=config.complexity_weight,
             )
 
     def sorted_population(members: Sequence[OrgGenome]) -> list[OrgGenome]:
@@ -437,9 +464,15 @@ def evolve(
             eval_backends,
             config.cost_weight,
             workers=config.workers,
+            complexity_weight=config.complexity_weight,
         ),
         "seed": evaluate_many(
-            seed, holdout, eval_backends, config.cost_weight, workers=config.workers
+            seed,
+            holdout,
+            eval_backends,
+            config.cost_weight,
+            workers=config.workers,
+            complexity_weight=config.complexity_weight,
         ),
     }
     front = pareto.frontier(pareto.points_from_evaluations(evaluations))
