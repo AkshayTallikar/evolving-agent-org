@@ -123,7 +123,7 @@ def render_markdown(run: RunResult) -> str:
         lines.append(f"| {name} | {ev.pass_rate:.1%} | ${ev.mean_cost_usd:.6f} |")
     lines += ["", "Held-out tasks were never used for selection.", ""]
 
-    if run.backend == "sim":
+    if run.backend == "sim" or run.backend.startswith("replay-sim:"):
         lines += ["Held-out tasks were scored on simulator seeds that selection never saw.", ""]
         lines += [SIM_NOTE, ""]
     return "\n".join(lines)
