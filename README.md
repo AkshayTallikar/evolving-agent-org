@@ -88,6 +88,9 @@ evorg show runs/sim-seed3
 # score one genome on a split
 evorg bench examples/seed_genome.json --split holdout
 
+# what is each gene of a run's champion worth? remove or revert one at a time
+evorg ablate runs/sim-seed3 --seeds 3 --out runs/sim-seed3/ablation.md
+
 pytest          # runs offline, no API key needed
 ```
 

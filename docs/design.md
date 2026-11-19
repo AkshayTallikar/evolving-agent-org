@@ -504,6 +504,20 @@ guards the check and the reservation, so threads cannot overshoot together.
 share one budgeted backend. `evorg estimate` runs the simulator through
 `CountingBackend` and prices the call counts at worst-case output and 1.5x input.
 
+### 4.13 Ablation
+
+`evorg/ablation.py`. `evorg ablate RUN_DIR [--seeds N] [--split holdout|train] [--out FILE]`
+answers what each gene of a champion is worth. Genes are a role, an instruction, a model tier
+above `small` (reverted to `small`), and a retry budget that differs from the seed's (reverted
+to the seed's value). `build_variants` makes one child per gene, each differing from the
+champion by exactly one edit. A child that fails `OrgGenome.validate` is skipped and listed
+with the reason; removing the coder is the case that always arises. The champion and every
+variant are scored with the simulated backend on the same tasks and seeds. Pass rate and cost
+are paired by (seed, task) and fitness by seed, with `paired_bootstrap_ci` at 95% and a fixed
+bootstrap seed, so the output is deterministic. `render_ablation` sorts rows by fitness change,
+most harmful removal first, and gives each a one-line verdict. Nothing is written except the
+markdown, and nothing calls a paid API.
+
 ## 5. Testing strategy
 
 * Unit tests per module, no network, no API key.

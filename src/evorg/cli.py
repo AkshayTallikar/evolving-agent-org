@@ -1,5 +1,5 @@
-"""Command-line interface: ``evorg run``, ``evorg estimate``, ``evorg show``, ``evorg bench``
-and ``evorg serve``.
+"""Command-line interface: ``evorg run``, ``evorg estimate``, ``evorg show``, ``evorg bench``,
+``evorg ablate`` and ``evorg serve``.
 
 ``main`` returns an exit code and never calls ``sys.exit`` itself, so tests can call it
 directly. Progress goes to stderr; reports and tables go to stdout.
@@ -15,6 +15,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from evorg.ablation import ablate, champion_and_seed, render_ablation, seed_offsets
 from evorg.bench import load_benchmark, task_index
 from evorg.evolution import (
     EvolutionConfig,
@@ -86,6 +87,12 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--backend", choices=["sim"], default="sim")
     bench.add_argument("--seed", type=int, default=0)
 
+    ablate = sub.add_parser("ablate", help="score a run's champion with each gene removed")
+    ablate.add_argument("dir", metavar="RUN_DIR", help="run directory holding run.json")
+    ablate.add_argument("--seeds", type=int, default=2, help="simulator seeds per variant")
+    ablate.add_argument("--split", choices=["holdout", "train"], default="holdout")
+    ablate.add_argument("--out", help="write the markdown to this file instead of stdout")
+
     serve = sub.add_parser("serve", help="serve saved runs and the lineage explorer page")
     serve.add_argument("--runs-dir", default="runs", help="directory holding run folders")
     serve.add_argument("--port", type=int, default=8000)
@@ -147,6 +154,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "estimate": _cmd_estimate,
         "show": _cmd_show,
         "bench": _cmd_bench,
+        "ablate": _cmd_ablate,
         "serve": _cmd_serve,
     }
     return handlers[args.command](args)
@@ -332,6 +340,31 @@ def _cmd_bench(args: argparse.Namespace) -> int:
         f"mean cost ${ev.mean_cost_usd:.6f} per task, total ${total_cost:.6f}, "
         f"fitness {ev.fitness:.4f}"
     )
+    return EXIT_OK
+
+
+def _cmd_ablate(args: argparse.Namespace) -> int:
+    if args.seeds < 1:
+        print("error: --seeds must be at least 1", file=sys.stderr)
+        return EXIT_USAGE
+    path = Path(args.dir) / RUN_NAME
+    try:
+        data = json.loads(path.read_text())
+        champion, seed, cost_weight = champion_and_seed(data)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print(f"error: cannot load run from {path}: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    seeds = seed_offsets(data["config"]["seed"], args.split, args.seeds)
+    print(f"ablate: scoring the champion and its variants on {args.split}", file=sys.stderr)
+    result = ablate(
+        champion, seed, load_benchmark(args.split), seeds, cost_weight, split=args.split
+    )
+    report = render_ablation(result)
+    if args.out:
+        Path(args.out).write_text(report)
+        print(f"wrote {args.out}", file=sys.stderr)
+    else:
+        sys.stdout.write(report)
     return EXIT_OK
 
 
