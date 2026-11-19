@@ -35,6 +35,23 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 340px)
 .tree-wrap { overflow-x: auto; background: var(--panel); border-radius: 8px; }
 .tree-wrap svg { display: block; }
 .legend { font-size: 13px; color: var(--muted); margin-top: 8px; }
+.chart-wrap { background: var(--panel); border-radius: 8px; padding: 8px; margin-top: 16px; }
+.chart-wrap svg { display: block; width: 100%; height: auto; }
+.frontier-line { fill: none; stroke: var(--accent); stroke-width: 2; }
+.axis { stroke: var(--line); stroke-width: 1; }
+.axis-title { font-size: 12px; fill: var(--muted); }
+.pt { stroke: var(--panel); stroke-width: 1.5; cursor: pointer; }
+.pt.other { fill: var(--muted); fill-opacity: 0.5; }
+.pt.front { fill: var(--accent); }
+.pt.champ { fill: var(--champ); }
+.pt.sel { stroke: var(--fg); stroke-width: 3; }
+.pt:focus { outline: none; }
+.pt:focus-visible { stroke: var(--fg); stroke-width: 3; }
+.key { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin: 0 4px 0 10px;
+  vertical-align: middle; }
+.key.front-key { background: var(--accent); }
+.key.champ-key { background: var(--champ); }
+.key.other-key { background: var(--muted); opacity: 0.5; }
 .edge { fill: none; stroke: var(--line); stroke-width: 1.5; }
 .edge.on { stroke: var(--champ); stroke-width: 3; }
 .node { stroke: var(--line); stroke-width: 1.5; cursor: pointer; }
@@ -216,6 +233,100 @@ function Details({ runName, genomeId, champion }) {
       : h("p", { className: "muted" }, "None. This is the seed, or its parent is not in the run."));
 }
 
+// Frontier scatter: x is mean cost per task (from $0), y is pass rate. Drawn in a fixed viewBox
+// so it scales down to phone width.
+const FW = 480;
+const FH = 320;
+const FL = 56;   // left margin, room for percent labels
+const FR = 16;
+const FT = 16;
+const FB = 48;   // bottom margin, room for dollar labels and the axis title
+
+function Frontier({ rows, selected, onSelect }) {
+  const pts = rows.filter(r => r.pass_rate != null && r.mean_cost_usd != null);
+  if (!pts.length) {
+    return h("p", { className: "muted" }, "No evaluated genomes with a pass rate and cost to plot.");
+  }
+  const xMax = Math.max(...pts.map(p => p.mean_cost_usd)) * 1.05 || 1;
+  let yLo = Math.max(0, Math.min(...pts.map(p => p.pass_rate)) - 0.05);
+  let yHi = Math.min(1, Math.max(...pts.map(p => p.pass_rate)) + 0.05);
+  if (yHi - yLo < 0.2) {
+    yHi = Math.min(1, yLo + 0.2);
+    yLo = Math.max(0, yHi - 0.2);
+  }
+  const sx = c => FL + (c / xMax) * (FW - FL - FR);
+  const sy = p => FT + (1 - (p - yLo) / (yHi - yLo)) * (FH - FT - FB);
+  const pct = v => Math.round(v * 100) + "%";
+  const usd = v => "$" + v.toPrecision(2);
+
+  const front = pts.filter(p => p.on_frontier)
+    .sort((a, b) => a.mean_cost_usd - b.mean_cost_usd || (a.id < b.id ? -1 : 1));
+  const line = front.length > 1
+    ? h("polyline", {
+      className: "frontier-line",
+      points: front.map(p => `${sx(p.mean_cost_usd)},${sy(p.pass_rate)}`).join(" "),
+    })
+    : null;
+
+  const ticks = [0, 1, 2, 3, 4];
+  const xTicks = ticks.map(i => {
+    const v = (xMax / 1.05) * i / 4;
+    return h("text", { key: "x" + i, x: sx(v), y: FH - FB + 16, textAnchor: "middle", className: "label" },
+      i === 0 ? "$0" : usd(v));
+  });
+  const yTicks = ticks.map(i => {
+    const v = yLo + (yHi - yLo) * i / 4;
+    return h("text", { key: "y" + i, x: FL - 8, y: sy(v) + 4, textAnchor: "end", className: "label" },
+      pct(v));
+  });
+
+  const dots = pts.map(p => {
+    const cls = ["pt",
+      p.is_champion ? "champ" : p.on_frontier ? "front" : "other",
+      p.id === selected ? "sel" : ""].join(" ");
+    const pick = () => onSelect(p.id);
+    return h("circle", {
+      key: p.id,
+      cx: sx(p.mean_cost_usd), cy: sy(p.pass_rate),
+      r: p.is_champion ? 8 : p.on_frontier ? 6 : 5,
+      className: cls,
+      role: "button",
+      tabIndex: 0,
+      "aria-label": `genome ${p.id}, pass rate ${pct(p.pass_rate)}, ` +
+        `mean cost ${usd(p.mean_cost_usd)}${p.on_frontier ? ", on the frontier" : ""}` +
+        `${p.is_champion ? ", champion" : ""}`,
+      onClick: pick,
+      onKeyDown: e => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); }
+      },
+    });
+  });
+
+  const champ = pts.find(p => p.is_champion);
+  const champLabel = champ
+    ? h("text", {
+      x: sx(champ.mean_cost_usd), y: sy(champ.pass_rate) - 12, textAnchor: "middle",
+      className: "label champ",
+    }, "champion")
+    : null;
+
+  return h("div", { className: "chart-wrap" },
+    h("svg", {
+      viewBox: `0 0 ${FW} ${FH}`, role: "img",
+      "aria-label": "Scatter plot of pass rate against mean cost per task, with the Pareto frontier",
+    },
+    h("line", { x1: FL, y1: FT, x2: FL, y2: FH - FB, className: "axis" }),
+    h("line", { x1: FL, y1: FH - FB, x2: FW - FR, y2: FH - FB, className: "axis" }),
+    xTicks, yTicks,
+    h("text", { x: (FL + FW - FR) / 2, y: FH - 6, textAnchor: "middle", className: "axis-title" },
+      "mean cost per task (USD)"),
+    h("text", {
+      x: 14, y: (FT + FH - FB) / 2, textAnchor: "middle", className: "axis-title",
+      transform: `rotate(-90 14 ${(FT + FH - FB) / 2})`,
+    }, "pass rate"),
+    line, dots, champLabel));
+}
+
 function summary(run) {
   const ev = run.evaluations[run.champion_id];
   const cfg = run.config;
@@ -230,6 +341,7 @@ function App() {
   const [run, setRun] = useState(null);
   const [selected, setSelected] = useState("");
   const [error, setError] = useState(null);
+  const [frontier, setFrontier] = useState(null);
 
   useEffect(() => {
     getJson("api/runs").then(
@@ -237,6 +349,17 @@ function App() {
       err => setError(err.message),
     );
   }, []);
+
+  useEffect(() => {
+    if (!runName) return undefined;
+    let live = true;
+    setFrontier(null);
+    getJson("api/runs/" + enc(runName) + "/frontier").then(
+      data => { if (live) setFrontier(data); },
+      err => { if (live) setFrontier({ error: err.message }); },
+    );
+    return () => { live = false; };
+  }, [runName]);
 
   useEffect(() => {
     if (!runName) return undefined;
@@ -271,7 +394,18 @@ function App() {
           : h("p", { className: "muted" }, "Loading run..."),
         h("p", { className: "legend" },
           "Node colour is fitness: pale is low, dark is high. Orange lines mark the path from the " +
-          "champion back to the seed. Click or tab to a node for details.")),
+          "champion back to the seed. Click or tab to a node for details."),
+        h("h3", null, "Cost and quality frontier"),
+        frontier === null
+          ? h("p", { className: "muted" }, "Loading frontier...")
+          : frontier.error
+            ? h("p", { className: "muted" }, frontier.error)
+            : h(Frontier, { rows: frontier.points, selected, onSelect: setSelected }),
+        h("p", { className: "legend" },
+          h("span", { className: "key front-key" }), "on the frontier (line, cheapest first)",
+          h("span", { className: "key champ-key" }), "champion",
+          h("span", { className: "key other-key" }), "other evaluated genomes. ",
+          "Pass rate against mean cost per task. Click a point for its details.")),
       h("aside", null,
         h(Details, { runName, genomeId: selected, champion: run ? run.champion_id : null }))));
 }
