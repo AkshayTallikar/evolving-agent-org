@@ -574,10 +574,21 @@ def simulated_backends(
 def run_simulated(
     config: EvolutionConfig,
     on_generation: Callable[[GenerationRecord], None] | None = None,
+    wrap: Callable[[LLMBackend, str], LLMBackend] | None = None,
 ) -> RunResult:
-    """Evolve on the simulated backends, using the built-in train and holdout splits."""
+    """Evolve on the simulated backends, using the built-in train and holdout splits.
+
+    ``wrap(backend, stream)`` may replace each simulator backend, for example with a recording
+    or replay backend. The stream label is unique per simulator seed, because each seed
+    answers the same request differently.
+    """
     _validate_config(config)
-    train_backends, holdout_backends = simulated_backends(config)
+    sim_train, sim_holdout = simulated_backends(config)
+    train_backends: Sequence[LLMBackend] = sim_train
+    holdout_backends: Sequence[LLMBackend] = sim_holdout
+    if wrap is not None:
+        train_backends = [wrap(b, f"train:{b.seed}") for b in sim_train]
+        holdout_backends = [wrap(b, f"holdout:{b.seed}") for b in sim_holdout]
     architect = Architect(train_backends[0], random.Random(config.seed + 1))
     return evolve(
         config,

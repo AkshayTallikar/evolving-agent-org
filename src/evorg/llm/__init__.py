@@ -13,6 +13,13 @@ from evorg.llm.base import (
     estimate_cost,
 )
 from evorg.llm.budget import BudgetedBackend, BudgetExceeded, CountingBackend
+from evorg.llm.cassette import (
+    Cassette,
+    CassetteError,
+    CassetteMiss,
+    RecordingBackend,
+    ReplayBackend,
+)
 from evorg.llm.simulated import SimulatedBackend
 
 __all__ = [
@@ -21,7 +28,12 @@ __all__ = [
     "AnthropicBackend",
     "BudgetExceeded",
     "BudgetedBackend",
+    "Cassette",
+    "CassetteError",
+    "CassetteMiss",
     "CountingBackend",
+    "RecordingBackend",
+    "ReplayBackend",
     "LLMBackend",
     "LLMRequest",
     "LLMResponse",
