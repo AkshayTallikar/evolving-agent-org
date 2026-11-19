@@ -82,6 +82,10 @@ evorg run --backend sim --generations 8 --population 8 --seed 3 --eval-seeds 3
 # grade up to 4 tasks at once (about 1.9x faster on 4 cores, same results)
 evorg run --backend sim --generations 8 --population 8 --seed 3 --workers 4
 
+# grading results are cached in process (the simulator resubmits the same code a lot).
+# Set EVORG_GRADE_CACHE=0 to turn the cache off; results are identical either way.
+EVORG_GRADE_CACHE=0 evorg run --backend sim --generations 8 --population 8 --seed 3
+
 # re-render a saved run
 evorg show runs/sim-seed3
 

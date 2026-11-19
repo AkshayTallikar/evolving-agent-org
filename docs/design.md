@@ -249,6 +249,38 @@ runs in its own try/except so one failure does not hide others. Results come bac
 on stdout. This is isolation from the evolver process, not a security sandbox; the README
 says so.
 
+**Grade cache.** `grade` is a pure function of `(code, tuple(tests), timeout_s)`, and the
+simulator resubmits the same few solutions across generations, seeds and tests. So `grade`
+keeps an in-process cache of `GradeResult` values (frozen, so sharing them is safe):
+
+* Thread-safe: a lock guards the table and the counters, and the subprocess runs outside it,
+  so worker threads still grade in parallel. Two threads that miss on the same key at once
+  both run the grader; the grade is deterministic, so the duplicate is harmless.
+* Bounded: least recently used eviction at `CACHE_MAX_ENTRIES` (4096).
+* **Timeouts are not cached.** A timeout can depend on machine load, so caching one could
+  pin a flaky failure into every later grade. Every other result is cached, including
+  syntax errors, code errors and runner output that failed to parse.
+* Helpers: `grade_cache_info()` returns hits, misses, size and enabled state;
+  `clear_grade_cache()` empties the table and resets the counts; `set_grade_cache_enabled(bool)`
+  switches it. Setting `EVORG_GRADE_CACHE=0` starts the process with it off. Disabled means
+  every call runs the subprocess and the counts stay at zero.
+* Callers (`executor.py`) are unchanged. The cache changes only how long a run takes. It
+  must not change the result, so `run.json` is byte-identical with the cache on or off. A test
+  in `tests/test_grade_cache.py` checks this on a small simulated run.
+
+Measured on this machine (single runs per configuration, so treat the ratios as rough):
+
+| Measurement | Before | Cache on | Cache off (new code) |
+| --- | --- | --- | --- |
+| `python -m pytest -q -x` | 8m21s (501 s) | 29 s | 469 s |
+| `evorg run --backend sim --generations 3 --population 6 --seed 3` | 9.0 s, 9.6 s | 2.3 s, 2.1 s | 8.1 s, 9.1 s |
+
+Grade cache hits and misses: the small run above had 236 hits and 76 misses (76% hits), and
+`--generations 8 --population 8 --seed 3` had 459 hits and 93 misses (83% hits). The `run.json`
+from the small run was byte-identical before the change and with the cache on and off.
+The full suite is about 17 times faster with the cache on. The small CLI run is about 4 times
+faster.
+
 ### 4.5 `evorg.executor`
 
 ```python
