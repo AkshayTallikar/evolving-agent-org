@@ -312,7 +312,7 @@ function Frontier({ rows, selected, onSelect }) {
 
   return h("div", { className: "chart-wrap" },
     h("svg", {
-      viewBox: `0 0 ${FW} ${FH}`, role: "img",
+      viewBox: `0 0 ${FW} ${FH}`, role: "group",
       "aria-label": "Scatter plot of pass rate against mean cost per task, with the Pareto frontier",
     },
     h("line", { x1: FL, y1: FT, x2: FL, y2: FH - FB, className: "axis" }),
