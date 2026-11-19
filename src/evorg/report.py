@@ -43,12 +43,13 @@ def render_markdown(run: RunResult) -> str:
 
     seeds_note = f"scored over {cfg.eval_seeds} simulator seeds, " if cfg.eval_seeds > 1 else ""
     crossover_note = f"crossover rate {cfg.crossover_rate:g}, " if cfg.crossover_rate > 0 else ""
+    selection_note = "pareto selection, " if cfg.selection == "pareto" else ""
     lines: list[str] = [
         "# evorg run",
         "",
         (
             f"Backend {run.backend}, seed {cfg.seed}, population {cfg.population}, "
-            f"generations {cfg.generations}, {seeds_note}{crossover_note}"
+            f"generations {cfg.generations}, {seeds_note}{crossover_note}{selection_note}"
             f"{len(run.evaluations)} genomes "
             f"evaluated, architect proposals valid {valid}/proposed {proposed}."
         ),
@@ -95,6 +96,20 @@ def render_markdown(run: RunResult) -> str:
     lines += ["## Lineage", ""]
     for i, genome in enumerate(run.lineage(run.champion_id), start=1):
         lines.append(_lineage_line(run, i, genome))
+    lines.append("")
+
+    lines += [
+        "## Cost/quality frontier",
+        "",
+        "Genomes no other evaluated genome beats on both train pass rate and mean cost, "
+        "cheapest first.",
+        "",
+        "| genome | pass rate | mean cost per task |",
+        "| --- | --- | --- |",
+    ]
+    for genome_id in run.frontier:
+        ev = run.evaluations[genome_id]
+        lines.append(f"| {genome_id} | {ev.pass_rate:.1%} | ${ev.mean_cost_usd:.6f} |")
     lines.append("")
 
     lines += [

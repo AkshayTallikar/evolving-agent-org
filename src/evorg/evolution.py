@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
+from evorg import pareto
 from evorg.bench import Task, load_benchmark, task_index
 from evorg.crossover import crossover
 from evorg.executor import TaskResult, run_task
@@ -30,6 +31,7 @@ TRAIN_SEED_STEP = 1000  # spacing between the simulator seeds of one run
 HOLDOUT_SEED_OFFSET = 500_000  # holdout seeds sit far above every training seed
 CROSSOVER_PAIR_TRIES = 3  # draws for a second parent that differs from the first
 CROSSOVER_MUTATE_PROB = 0.5  # chance that a crossover child is also mutated
+SELECTION_MODES = ("scalar", "pareto")
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,7 @@ class EvolutionConfig:
     eval_seeds: int = 1  # simulator seeds each genome is scored on, averaged
     workers: int = 1  # tasks graded or called at once; never changes the results
     crossover_rate: float = 0.0  # chance that a child is bred by crossover, not mutation
+    selection: str = "scalar"  # "scalar": rank by fitness; "pareto": rank by front, then crowding
 
 
 @dataclass(frozen=True)
@@ -98,6 +101,7 @@ class RunResult:
     holdout: dict[str, Evaluation]  # champion and seed on held-out tasks
     architect_stats: dict = field(default_factory=dict)
     crossovers: int = 0  # children bred by crossover
+    frontier: list[str] = field(default_factory=list)  # front 0 over train evals, cost ascending
 
     def lineage(self, genome_id: str) -> list[OrgGenome]:
         """The chain from a root genome (no parents) down to ``genome_id``, root first."""
@@ -128,6 +132,7 @@ class RunResult:
             "seed_id": self.seed_id,
             "holdout": {name: _evaluation_dict(ev) for name, ev in self.holdout.items()},
             "crossovers": self.crossovers,
+            "frontier": list(self.frontier),
             "architect_stats": {
                 key: _r(value) if isinstance(value, float) else value
                 for key, value in self.architect_stats.items()
@@ -260,14 +265,32 @@ def _rank_key(ev: Evaluation) -> tuple[float, float, str]:
     return (-ev.fitness, ev.mean_cost_usd, ev.genome_id)
 
 
+def selection_keys(
+    members: Sequence[OrgGenome], evaluations: dict[str, Evaluation], selection: str
+) -> dict[str, tuple]:
+    """Sort key per genome id for ``members``; sorting ascending by key puts the best first.
+
+    ``"scalar"`` uses ``_rank_key``. ``"pareto"`` ranks the whole group at once by Pareto front
+    and crowding distance (see ``pareto.pareto_rank``), so keys are only comparable within one
+    call.
+    """
+    ids = [g.genome_id for g in members]
+    if selection == "pareto":
+        points = pareto.points_from_evaluations({gid: evaluations[gid] for gid in ids})
+        ranks = pareto.pareto_rank(points)
+        return {gid: pareto.pareto_sort_key(ranks[gid], gid) for gid in ids}
+    return {gid: _rank_key(evaluations[gid]) for gid in ids}
+
+
 def _tournament(
     pool: Sequence[OrgGenome],
-    evaluations: dict[str, Evaluation],
+    keys: dict[str, tuple],
     size: int,
     rng: random.Random,
 ) -> OrgGenome:
+    """The best of ``size`` random entrants from ``pool``, judged by precomputed ``keys``."""
     entrants = rng.sample(list(pool), min(size, len(pool)))
-    return min(entrants, key=lambda g: _rank_key(evaluations[g.genome_id]))
+    return min(entrants, key=lambda g: keys[g.genome_id])
 
 
 def _validate_config(config: EvolutionConfig) -> None:
@@ -284,6 +307,10 @@ def _validate_config(config: EvolutionConfig) -> None:
     _check_workers(config.workers)
     if not 0 <= config.crossover_rate <= 1:
         raise ValueError(f"crossover_rate must be between 0 and 1, got {config.crossover_rate}")
+    if config.selection not in SELECTION_MODES:
+        raise ValueError(
+            f"selection must be 'scalar' or 'pareto', got {config.selection!r}"
+        )
 
 
 def _as_backends(backend: LLMBackend | Sequence[LLMBackend]) -> list[LLMBackend]:
@@ -326,10 +353,13 @@ def evolve(
             )
 
     def sorted_population(members: Sequence[OrgGenome]) -> list[OrgGenome]:
-        return sorted(members, key=lambda g: _rank_key(evaluations[g.genome_id]))
+        keys = selection_keys(members, evaluations, config.selection)
+        return sorted(members, key=lambda g: keys[g.genome_id])
 
     def record(index: int, members: Sequence[OrgGenome]) -> None:
-        ordered = sorted_population(members)
+        # Records report progress by fitness in both modes, so the best-fitness line stays
+        # comparable; selection order only drives tournaments and survivors.
+        ordered = sorted(members, key=lambda g: _rank_key(evaluations[g.genome_id]))
         generation = GenerationRecord(
             index=index,
             members=[(g.genome_id, evaluations[g.genome_id].fitness) for g in ordered],
@@ -373,9 +403,10 @@ def evolve(
     for gen in range(1, config.generations + 1):
         children: list[OrgGenome] = []
         distinct = len({g.genome_id for g in population}) >= 2
+        keys = selection_keys(population, evaluations, config.selection)
         for _ in range(config.population):
             child, crossed = _make_child(
-                population, evaluations, config, architect, rng, distinct
+                population, keys, evaluations, config, architect, rng, distinct
             )
             crossovers += crossed
             child = register(child)
@@ -389,8 +420,9 @@ def evolve(
 
         next_population = ranked[: config.elite]
         remaining = ranked[config.elite :]
+        remaining_keys = selection_keys(remaining, evaluations, config.selection)
         while len(next_population) < config.population and remaining:
-            winner = _tournament(remaining, evaluations, config.tournament_size, rng)
+            winner = _tournament(remaining, remaining_keys, config.tournament_size, rng)
             remaining.remove(winner)
             next_population.append(winner)
         population = sorted_population(next_population)
@@ -410,6 +442,7 @@ def evolve(
             seed, holdout, eval_backends, config.cost_weight, workers=config.workers
         ),
     }
+    front = pareto.frontier(pareto.points_from_evaluations(evaluations))
     return RunResult(
         config=config,
         backend=train_backends[0].name,
@@ -421,6 +454,7 @@ def evolve(
         holdout=holdout_evals,
         architect_stats=dict(architect.stats),
         crossovers=crossovers,
+        frontier=[point.key for point in front],
     )
 
 
@@ -433,6 +467,7 @@ def _try_apply(genome: OrgGenome, m: Any) -> OrgGenome | None:
 
 def _make_child(
     population: Sequence[OrgGenome],
+    keys: dict[str, tuple],
     evaluations: dict[str, Evaluation],
     config: EvolutionConfig,
     architect: Architect,
@@ -443,26 +478,27 @@ def _make_child(
 
     With probability ``config.crossover_rate`` (and two distinct genomes to choose from) two
     tournament winners are crossed. Otherwise the child is one mutation of a tournament winner.
-    The rng is not touched at all when the rate is zero.
+    ``keys`` are the selection keys of ``population``. The rng is not touched at all when the
+    rate is zero.
     """
     if distinct and config.crossover_rate > 0 and rng.random() < config.crossover_rate:
-        pair = _crossover_pair(population, evaluations, config.tournament_size, rng)
+        pair = _crossover_pair(population, keys, config.tournament_size, rng)
         if pair is not None:
             return _crossover_child(pair, evaluations, architect, rng), 1
-    parent = _tournament(population, evaluations, config.tournament_size, rng)
+    parent = _tournament(population, keys, config.tournament_size, rng)
     return _mutate(parent, evaluations, architect, rng), 0
 
 
 def _crossover_pair(
     population: Sequence[OrgGenome],
-    evaluations: dict[str, Evaluation],
+    keys: dict[str, tuple],
     tournament_size: int,
     rng: random.Random,
 ) -> tuple[OrgGenome, OrgGenome] | None:
     """Two tournament winners with different ids, or None if the second draws keep matching."""
-    first = _tournament(population, evaluations, tournament_size, rng)
+    first = _tournament(population, keys, tournament_size, rng)
     for _ in range(CROSSOVER_PAIR_TRIES):
-        second = _tournament(population, evaluations, tournament_size, rng)
+        second = _tournament(population, keys, tournament_size, rng)
         if second.genome_id != first.genome_id:
             return first, second
     return None

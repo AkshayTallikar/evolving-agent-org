@@ -1,5 +1,6 @@
 import json
 import random
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,6 +13,7 @@ from evorg.evolution import (
     evaluate_many,
     evolve,
     run_simulated,
+    selection_keys,
     simulated_backends,
 )
 from evorg.executor import TaskResult, run_task
@@ -273,3 +275,74 @@ def test_crossover_rate_zero_and_omitted_give_the_same_run():
     )
     omitted = run_simulated(EvolutionConfig(population=4, generations=2, seed=3))
     assert explicit.to_dict() == omitted.to_dict()
+
+
+def test_selection_defaults_to_scalar():
+    assert EvolutionConfig().selection == "scalar"
+
+
+@pytest.mark.parametrize("mode", ["fitness", "", "Pareto"])
+def test_unknown_selection_is_rejected(mode):
+    with pytest.raises(ValueError, match="selection"):
+        run_simulated(EvolutionConfig(population=4, generations=1, selection=mode))
+
+
+def _fake(genome_id: str, pass_rate: float, cost: float) -> Evaluation:
+    fitness = pass_rate - 10 * cost
+    return Evaluation(genome_id, pass_rate, cost, fitness, ())
+
+
+def _genome(genome_id: str):
+    return SimpleNamespace(genome_id=genome_id)  # selection_keys only reads genome_id
+
+
+def test_pareto_keys_put_front_zero_first_and_scalar_keys_follow_fitness():
+    evals = {
+        "a": _fake("a", 0.9, 0.02),  # front 0
+        "b": _fake("b", 0.5, 0.01),  # front 0, cheapest
+        "c": _fake("c", 0.4, 0.05),  # dominated by a and b
+    }
+    members = [_genome(k) for k in ("c", "a", "b")]
+    keys = selection_keys(members, evals, "pareto")
+    order = sorted(members, key=lambda g: keys[g.genome_id])
+    assert [g.genome_id for g in order][-1] == "c"
+    assert {g.genome_id for g in order[:2]} == {"a", "b"}
+
+    scalar = selection_keys(members, evals, "scalar")
+    assert scalar["a"] == evolution._rank_key(evals["a"])
+
+
+def test_pareto_run_is_deterministic_for_a_seed():
+    config = EvolutionConfig(population=5, generations=2, seed=1, selection="pareto")
+    first = json.dumps(run_simulated(config).to_dict(), sort_keys=True)
+    second = json.dumps(run_simulated(config).to_dict(), sort_keys=True)
+    assert first == second
+
+
+def test_pareto_run_keeps_the_fitness_champion_and_a_non_dominated_frontier():
+    result = run_simulated(EvolutionConfig(population=6, generations=3, seed=0, selection="pareto"))
+    best_fitness = max(ev.fitness for ev in result.evaluations.values())
+    assert result.evaluations[result.champion_id].fitness == best_fitness
+
+    points = {
+        gid: (ev.pass_rate, ev.mean_cost_usd) for gid, ev in result.evaluations.items()
+    }
+    assert result.frontier
+    assert set(result.frontier) <= set(points)
+    for gid in result.frontier:
+        rate, cost = points[gid]
+        for other_rate, other_cost in points.values():
+            dominated = other_rate >= rate and other_cost <= cost and (
+                other_rate > rate or other_cost < cost
+            )
+            assert not dominated
+    costs = [points[gid][1] for gid in result.frontier]
+    assert costs == sorted(costs)
+
+
+def test_frontier_is_in_to_dict_in_both_modes():
+    for mode in ("scalar", "pareto"):
+        data = run_simulated(EvolutionConfig(population=4, generations=1, selection=mode)).to_dict()
+        assert data["frontier"]
+        assert data["config"]["selection"] == mode
+        json.dumps(data)

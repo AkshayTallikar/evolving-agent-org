@@ -119,6 +119,12 @@ def _add_config_flags(parser: argparse.ArgumentParser) -> None:
         default=default_config.crossover_rate,
         help="chance that a child is bred by crossing two parents (0 to 1, default 0)",
     )
+    parser.add_argument(
+        "--selection",
+        choices=["scalar", "pareto"],
+        default=default_config.selection,
+        help="rank genomes by fitness (scalar) or by Pareto front and crowding (pareto)",
+    )
 
 
 def _config_from_args(args: argparse.Namespace) -> EvolutionConfig:
@@ -130,6 +136,7 @@ def _config_from_args(args: argparse.Namespace) -> EvolutionConfig:
         eval_seeds=args.eval_seeds,
         workers=args.workers,
         crossover_rate=args.crossover_rate,
+        selection=args.selection,
     )
 
 
