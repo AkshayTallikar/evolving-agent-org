@@ -50,7 +50,7 @@ flowchart LR
 | Module | What it does |
 | --- | --- |
 | `genome.py` | Immutable org genome, validation, content-hash id, diffs between genomes |
-| `llm/` | `LLMBackend` protocol, an offline deterministic simulator, and an Anthropic backend |
+| `llm/` | `LLMBackend` protocol, an offline deterministic simulator, an Anthropic backend, and record/replay cassettes |
 | `bench/` | 36 small Python tasks (24 train, 12 held-out) with visible and hidden tests, and a subprocess grader |
 | `executor.py` | Runs one organization on one task: planners, coder, then tester or reviewer, with retries on feedback |
 | `mutation.py` | Seven mutation operators and the architect, which parses LLM output leniently |
@@ -116,6 +116,16 @@ and a `--max-usd` cap. The cap is enforced before every call, architect included
 pip install -e ".[anthropic]"
 evorg estimate --generations 3 --population 4
 evorg run --backend anthropic --generations 3 --population 4 --max-usd 5 --yes
+```
+
+A paid run can be saved and repeated for free. `--record` writes every model call to a JSONL
+cassette, and `--replay` answers from that file with no API calls and no cost. A replay uses the
+recorded `--generations`, `--population`, `--seed` and `--eval-seeds`, and a call the cassette
+does not hold stops the run with an error.
+
+```bash
+evorg run --backend anthropic --generations 3 --population 4 --max-usd 5 --yes --record runs/paid.jsonl
+evorg run --replay runs/paid.jsonl --generations 3 --population 4 --out runs/paid-replay
 ```
 
 ## Demo

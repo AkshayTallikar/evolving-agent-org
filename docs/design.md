@@ -550,6 +550,43 @@ bootstrap seed, so the output is deterministic. `render_ablation` sorts rows by 
 most harmful removal first, and gives each a one-line verdict. Nothing is written except the
 markdown, and nothing calls a paid API.
 
+### 4.14 Record and replay
+
+`evorg/llm/cassette.py`. `RecordingBackend(inner, path, stream="")` forwards each call to
+`inner` and appends one JSON line with the hash, the request fields and the response fields.
+`ReplayBackend(path_or_cassette, stream="")` answers from a cassette and never calls a model.
+Its name is `replay:<path>`, and replayed responses carry the recorded cost, so reports still
+show what the paid run cost. Only successful calls are recorded.
+
+The request hash is the sha256 hex digest of the canonical JSON (sorted keys, no spaces, UTF-8)
+of `v` (the hash version, 1), `role_kind`, `model`, `system`, `prompt`, `task_id`, `attempt` and
+`metadata`. Metadata is included, so the architect's genome and proposal count are part of the
+key. Metadata must be JSON-serialisable: otherwise `TypeError` is raised before the inner backend
+is called. Python's `hash()` is never used.
+
+Two requests with the same hash can get different answers, from a real model or from two
+simulator seeds. So every line also carries a `stream` label, and lookups use `(stream, hash)`.
+Within one key, answers replay in recorded order: the n-th call gets the n-th answer, and a call
+after the last one is a miss, not a repeat. The CLI labels each simulator backend `train:<seed>`
+or `holdout:<seed>`, so a replay with another seed cannot reuse answers it did not record.
+
+A miss raises `CassetteMiss`, which names the hash, the role and the task. `Cassette.load`
+rejects a line whose hash does not match its request, so a hand-edited cassette fails at load.
+Writers that share a path share a lock, so concurrent recording from threads stays valid. With
+`workers > 1`, duplicate answers may be recorded in a different order from run to run, but for
+the simulator they are identical, and for a real model replay still returns the recorded
+answers.
+
+`evorg run --record FILE` writes a new cassette (it refuses an existing file) and `evorg run
+--replay FILE` replays one. They are mutually exclusive, and `--replay` takes the simulator
+path only, since it makes no calls. A replay must use the recorded `--generations`,
+`--population`, `--seed` and `--eval-seeds`; any other settings produce a miss. The replay's
+default output folder is `runs/replay-seed<seed>`, so it never overwrites a simulator run.
+
+Known limit: `report.py` adds its two simulator caveats only when `run.backend == "sim"`, so a
+replayed simulator run omits them. Keeping them would need the recorded backend name carried
+into `RunResult`.
+
 ## 5. Testing strategy
 
 * Unit tests per module, no network, no API key.
