@@ -8,6 +8,10 @@ rewrite an instruction, move a role to a bigger model, allow another retry. A be
 tournament with executed tests decides which version survives. Over generations the
 organization redesigns itself, and every change is recorded with the architect's reason.
 
+**Result so far (simulated models):** over 10 runs on a 36-task benchmark, evolved teams pass
+63% to 70% of the 12 held-out tasks, against 30% for the starting single-coder team. The gain
+of about 32 points has a 95% interval that excludes zero. See [Results, honestly](#results-honestly).
+
 ## The problem
 
 Most multi-agent systems are designed by hand. Someone decides there should be a planner and
@@ -143,7 +147,7 @@ champion it saved is in [examples/champion_seed3.json](examples/champion_seed3.j
 
 ## Results, honestly
 
-The headline numbers above come from one run. [scripts/robustness.py](scripts/robustness.py)
+The demo numbers above come from one run. [scripts/robustness.py](scripts/robustness.py)
 re-scores the champions of 10 runs on 20 simulator seeds they never saw. Every mean below has a
 95% percentile bootstrap interval over those seeds or runs ([src/evorg/stats.py](src/evorg/stats.py)).
 The seed genome's interval comes from its 20 scoring seeds, and the champions' intervals come from
