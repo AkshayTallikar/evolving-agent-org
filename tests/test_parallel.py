@@ -100,8 +100,7 @@ def test_workers_below_one_is_rejected(workers):
 
 
 def test_four_workers_finish_clearly_faster_than_one():
-    tasks = load_benchmark("train")
-    assert len(tasks) == 8
+    tasks = load_benchmark("train")[:8]
     genome = seed_genome()
     backend = SlowBackend()
 

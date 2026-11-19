@@ -163,11 +163,11 @@ def test_no_genome_is_evaluated_twice(monkeypatch):
     assert set(evaluated) == set(result.evaluations) == set(result.genomes)
 
 
-def test_holdout_reports_champion_and_seed_on_four_tasks():
+def test_holdout_reports_champion_and_seed_on_every_holdout_task():
     result = run_simulated(SMALL)
     assert set(result.holdout) == {"champion", "seed"}
-    assert len(result.holdout["champion"].results) == 4
-    assert len(result.holdout["seed"].results) == 4
+    assert len(result.holdout["champion"].results) == 12
+    assert len(result.holdout["seed"].results) == 12
     assert result.holdout["seed"].genome_id == result.seed_id
     assert result.holdout["champion"].genome_id == result.champion_id
 
@@ -236,8 +236,9 @@ def test_crossover_rate_outside_zero_to_one_is_rejected(rate):
 def test_crossover_rate_zero_is_the_default_and_pinned_champion_is_unchanged():
     assert EvolutionConfig().crossover_rate == 0.0
     result = run_simulated(EvolutionConfig(population=8, generations=8, seed=0))
-    assert result.champion_id == "fba3bf8545"
-    assert result.evaluations[result.champion_id].fitness == pytest.approx(0.624522, abs=1e-6)
+    # Pinned on the 36-task benchmark; a benchmark change moves this pin, nothing else should.
+    assert result.champion_id == "650f4a0a71"
+    assert result.evaluations[result.champion_id].fitness == pytest.approx(0.689867, abs=1e-6)
     assert result.crossovers == 0
 
 

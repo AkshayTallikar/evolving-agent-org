@@ -19,7 +19,7 @@ evorg treats the organization as a genome and lets selection answer those questi
 - **Structure is searchable.** Roles, instructions, model tiers and retry budgets are all genes.
 - **Fitness is measured, not judged.** Code is graded by running hidden tests, and cost
   counts against fitness (`fitness = pass rate - 10 x mean USD per task`).
-- **Generalization is checked.** Four held-out tasks are never used for selection.
+- **Generalization is checked.** Twelve held-out tasks are never used for selection.
 - **Every change is explained.** Lineage keeps what changed and why the architect proposed it.
 
 ## Architecture
@@ -28,7 +28,7 @@ evorg treats the organization as a genome and lets selection answer those questi
 flowchart LR
     subgraph Generation
         P[Population of org genomes] --> E[Executor]
-        E -->|plan, code, test or review, retry| B[(Benchmark: 8 train tasks)]
+        E -->|plan, code, test or review, retry| B[(Benchmark: 24 train tasks)]
         B -->|hidden tests in a subprocess| G[Grader]
         G --> F[Fitness: pass rate minus cost]
     end
@@ -39,7 +39,7 @@ flowchart LR
     V -->|no| R[Random fallback mutation]
     R --> C
     C --> P
-    F -->|after the last generation| H[(4 held-out tasks)]
+    F -->|after the last generation| H[(12 held-out tasks)]
     H --> Rep[report.md + run.json]
 ```
 
@@ -181,7 +181,8 @@ because nothing selects against them.
   milestone 2 experiment.
 - **The grader is not a sandbox.** It runs generated code in an isolated Python subprocess
   with a timeout. Real-model runs should happen in a container.
-- **Twelve tasks is small.** Enough to see selection pressure, not enough to make claims.
+- **Thirty-six tasks is still small.** Enough to see selection pressure and rough differences,
+  not enough for fine-grained claims.
 
 ## How this was built
 

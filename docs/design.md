@@ -221,7 +221,10 @@ def get_task(task_id: str) -> Task
 def task_index() -> dict[str, Task]
 ```
 
-Twelve tasks: eight `train`, four `holdout`, a spread of difficulty. Each task has at least
+Thirty-six tasks: 24 `train`, 12 `holdout`, difficulty 0.2 to 1.9. The original twelve live in
+`tasks.py`; `tasks_text.py`, `tasks_numbers.py` and `tasks_data.py` add eight each, and the
+`Task` record sits in `model.py` so those modules don't import `tasks.py`. `TASKS` lists every
+train task before every holdout task. Each task has at least
 two buggy solutions: at least one that fails a visible test, and at least one **subtle**
 bug that passes every visible test but fails a hidden one. The subtle bugs are what make a
 reviewer worth paying for.
