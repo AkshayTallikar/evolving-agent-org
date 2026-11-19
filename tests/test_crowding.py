@@ -132,7 +132,7 @@ def test_crowding_works_with_crossover_children():
 def test_generation_records_carry_diversity_and_the_run_dict_shows_it():
     result = run_simulated(EvolutionConfig(population=4, generations=2, seed=0))
     data = result.to_dict()
-    assert data["config"]["diversity"] == "none"
+    assert "diversity" not in data["config"]  # left out at its default
     for record, saved in zip(result.generations, data["generations"], strict=True):
         assert saved["distinct"] == record.distinct
         assert saved["mean_distance"] == pytest.approx(record.mean_distance, abs=1e-6)
