@@ -183,6 +183,11 @@ class Cassette:
         """Number of recorded calls in the file, over all streams."""
         return sum(len(answers) for answers in self.entries.values())
 
+    @property
+    def streams(self) -> set[str]:
+        """The stream labels in the file. A real-model run records the single stream ``""``."""
+        return {stream for stream, _digest in self.entries}
+
     @classmethod
     def load(cls, path: str | os.PathLike[str]) -> Cassette:
         """Read and check every line. Raises CassetteError for a bad or tampered line."""
@@ -224,13 +229,20 @@ class ReplayBackend:
 
     ``source`` is a path or an already loaded ``Cassette``, so several streams can share one
     load. Each instance keeps its own position in the recorded answers, under a lock, so it
-    can be used from several threads. The name is ``"replay:<path>"``.
+    can be used from several threads. The name is ``"<label>:<path>"``, ``"replay:<path>"`` by
+    default; the CLI labels a replayed simulator run ``"replay-sim"`` so reports keep their
+    simulator caveats.
     """
 
-    def __init__(self, source: Cassette | str | os.PathLike[str], stream: str = "") -> None:
+    def __init__(
+        self,
+        source: Cassette | str | os.PathLike[str],
+        stream: str = "",
+        label: str = "replay",
+    ) -> None:
         cassette = source if isinstance(source, Cassette) else Cassette.load(source)
         self.cassette = cassette
-        self.name = f"replay:{cassette.path}"
+        self.name = f"{label}:{cassette.path}"
         self.stream = stream
         self._used: dict[str, int] = {}
         self._lock = threading.Lock()

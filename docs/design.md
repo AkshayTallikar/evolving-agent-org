@@ -578,14 +578,15 @@ the simulator they are identical, and for a real model replay still returns the 
 answers.
 
 `evorg run --record FILE` writes a new cassette (it refuses an existing file) and `evorg run
---replay FILE` replays one. They are mutually exclusive, and `--replay` takes the simulator
-path only, since it makes no calls. A replay must use the recorded `--generations`,
-`--population`, `--seed` and `--eval-seeds`; any other settings produce a miss. The replay's
-default output folder is `runs/replay-seed<seed>`, so it never overwrites a simulator run.
-
-Known limit: `report.py` adds its two simulator caveats only when `run.backend == "sim"`, so a
-replayed simulator run omits them. Keeping them would need the recorded backend name carried
-into `RunResult`.
+--replay FILE` replays one. They are mutually exclusive, and `--replay` never calls a model.
+The replay follows the path the cassette was recorded on. A real-model run records one
+unlabelled stream through `evolve()`, so a cassette whose only stream is `""` is replayed
+through `evolve()` with the same architect seeding, and the backend is named `replay:<path>`.
+Any other cassette came from the simulator path and is replayed through `run_simulated`, with
+the backend named `replay-sim:<path>`; the report keys its simulator caveats on that prefix as
+well as on `sim`. A replay must use the recorded `--generations`, `--population`, `--seed` and
+`--eval-seeds`; any other settings produce a miss. The replay's default output folder is
+`runs/replay-seed<seed>`, so it never overwrites a simulator run.
 
 ## 5. Testing strategy
 

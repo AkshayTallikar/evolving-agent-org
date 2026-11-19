@@ -243,11 +243,26 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 "no API calls, no money spent",
                 file=sys.stderr,
             )
-            run = run_simulated(
-                config,
-                on_generation=_progress,
-                wrap=lambda _inner, stream: ReplayBackend(cassette_data, stream),
-            )
+            if cassette_data.streams == {""}:
+                # Recorded from a real-model run: replay through the same path it ran on.
+                replay = ReplayBackend(cassette_data)
+                architect = Architect(replay, random.Random(config.seed + 1))
+                run = evolve(
+                    config,
+                    replay,
+                    load_benchmark("train"),
+                    load_benchmark("holdout"),
+                    architect,
+                    on_generation=_progress,
+                )
+            else:
+                run = run_simulated(
+                    config,
+                    on_generation=_progress,
+                    wrap=lambda _inner, stream: ReplayBackend(
+                        cassette_data, stream, label="replay-sim"
+                    ),
+                )
         else:
             run = run_simulated(config, on_generation=_progress, wrap=_recorder(args.record))
     except BudgetExceeded as exc:

@@ -1,12 +1,13 @@
 import json
+import random
 import threading
 from pathlib import Path
 
 import pytest
 
-from evorg.bench import task_index
+from evorg.bench import load_benchmark, task_index
 from evorg.cli import EXIT_ERROR, EXIT_USAGE, main
-from evorg.evolution import EvolutionConfig, run_simulated
+from evorg.evolution import EvolutionConfig, evolve, run_simulated
 from evorg.llm import SimulatedBackend
 from evorg.llm.base import LLMRequest, LLMResponse
 from evorg.llm.cassette import (
@@ -17,6 +18,7 @@ from evorg.llm.cassette import (
     ReplayBackend,
     request_hash,
 )
+from evorg.mutation import Architect
 from evorg.report import SIM_NOTE
 
 TINY = dict(population=4, generations=2, seed=3, eval_seeds=2)
@@ -263,26 +265,43 @@ def test_cli_record_then_replay_round_trip(tmp_path, capsys):
     rec = json.loads((recorded_dir / "run.json").read_text())
     rep = json.loads((replayed_dir / "run.json").read_text())
     assert rec["backend"] == "sim"
-    assert rep["backend"] == f"replay:{cassette}"
+    assert rep["backend"] == f"replay-sim:{cassette}"
     assert _comparable(rep) == _comparable(rec)
 
     def strip_backend_line(text: str) -> str:
-        # The replay names its backend and drops the two simulator-only caveats, because
-        # report.py keys them on backend == "sim". See the limits note in docs/design.md.
-        simulator_only = {
-            SIM_NOTE,
-            "Held-out tasks were scored on simulator seeds that selection never saw.",
-        }
-        keep = [
-            line
-            for line in text.splitlines()
-            if line and not line.startswith("Backend ") and line not in simulator_only
-        ]
+        # Only the backend line differs: a replayed simulator run keeps the simulator caveats.
+        keep = [line for line in text.splitlines() if line and not line.startswith("Backend ")]
         return "\n".join(keep)
 
     rec_report = (recorded_dir / "report.md").read_text()
     rep_report = (replayed_dir / "report.md").read_text()
+    assert SIM_NOTE in rep_report
     assert strip_backend_line(rep_report) == strip_backend_line(rec_report)
+
+
+def test_cli_replays_a_real_model_style_cassette_through_the_paid_path(tmp_path, capsys):
+    # A paid run records one unlabelled stream through evolve(). The simulator stands in for
+    # the paid model here, so no API is called.
+    cassette = tmp_path / "paid.jsonl"
+    config = EvolutionConfig(generations=1, population=3, seed=3)
+    recorder = RecordingBackend(SimulatedBackend(task_index(), seed=7), cassette)
+    recorded = evolve(
+        config,
+        recorder,
+        load_benchmark("train"),
+        load_benchmark("holdout"),
+        Architect(recorder, random.Random(config.seed + 1)),
+    )
+    assert Cassette.load(cassette).streams == {""}
+
+    out = tmp_path / "rep"
+    flags = ["--generations", "1", "--population", "3", "--seed", "3", "--out", str(out)]
+    assert main(["run", "--replay", str(cassette), *flags]) == 0
+    assert "no API calls, no money spent" in capsys.readouterr().err
+    replayed = json.loads((out / "run.json").read_text())
+    assert replayed["backend"] == f"replay:{cassette}"
+    assert _comparable(replayed) == _comparable(recorded.to_dict())
+    assert SIM_NOTE not in (out / "report.md").read_text()
 
 
 def test_cli_replay_default_output_does_not_overwrite_a_sim_run(tmp_path, monkeypatch):
