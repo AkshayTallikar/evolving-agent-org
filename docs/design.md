@@ -546,9 +546,27 @@ champion by exactly one edit. A child that fails `OrgGenome.validate` is skipped
 with the reason; removing the coder is the case that always arises. The champion and every
 variant are scored with the simulated backend on the same tasks and seeds. Pass rate and cost
 are paired by (seed, task) and fitness by seed, with `paired_bootstrap_ci` at 95% and a fixed
-bootstrap seed, so the output is deterministic. `render_ablation` sorts rows by fitness change,
-most harmful removal first, and gives each a one-line verdict. Nothing is written except the
-markdown, and nothing calls a paid API.
+bootstrap seed, so the output is deterministic.
+
+Many genes are tested at once, so single intervals overstate what one row shows: with five
+genes each tested at 5%, the chance of at least one false alarm is about 23%. Each row therefore also gets a
+two-sided sign-flip permutation p-value for its pass rate (paired by seed, task), cost and
+fitness, from `paired_permutation_p` with the same pairs. Each metric's p-values are then
+Holm-Bonferroni adjusted across the rows of one ablation (`holm_adjust`). A verdict calls a
+change real ("costs N points", "saves N% cost", "worth its cost") only when its adjusted p is
+below 0.05. Otherwise it says the change is not clear from these seeds. The table keeps the 95%
+intervals and adds an "adjusted p (fitness)" column. The pass-rate adjusted p is in the verdict.
+`render_ablation` sorts rows by fitness change, most harmful removal first, and gives each a
+one-line verdict. Nothing is written except the markdown, and nothing calls a paid API.
+
+On the demo champion (`evorg run --backend sim --generations 8 --population 8 --seed 3`), a
+neutral instruction at weight 0 used to be called worth 12 points at 10 seeds, with a fitness
+interval that excluded zero. Its adjusted fitness p is now 0.06, so it is no longer called
+real. At 30 seeds the neutral rows read as not clear (adjusted p 0.19 on pass rate, 0.25 on
+fitness).
+The neutral rows still move pass rate by 7 to 12 points, because the simulator's coder and
+reviewer draws are keyed on the system and prompt text, so removing any instruction reshuffles
+them. The adjustment does not make that noise go away; it stops it from being called a finding.
 
 ### 4.14 Record and replay
 
@@ -600,9 +618,12 @@ well as on `sim`. A replay must use the recorded `--generations`, `--population`
 Comparisons across seeds are reported with uncertainty. `evorg.stats` holds a percentile
 bootstrap: `bootstrap_ci` resamples the per-seed values 2000 times with a fixed seed and
 returns the central 95% of the resampled means, and `paired_bootstrap_ci` does the same for
-the per-seed differences of two arms run on the same seeds. The scripts in `scripts/` print
-each mean with its interval, and each comparison with the paired difference and its interval.
-A difference counts as real only when its interval excludes zero. With 10 seeds and the
+the per-seed differences of two arms run on the same seeds. `paired_permutation_p` is a
+two-sided sign-flip test of zero mean difference: exact for up to 16 pairs, seeded Monte Carlo
+with a +1 correction above that. `holm_adjust` applies Holm-Bonferroni across a family of
+p-values. The scripts in `scripts/` print each mean with its interval, and each comparison with
+the paired difference and its interval. A difference counts as real only when its interval
+excludes zero. With 10 seeds and the
 12-task held-out split, the intervals are wide, so most small gaps are reported as within
 noise.
 

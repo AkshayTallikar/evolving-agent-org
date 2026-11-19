@@ -56,7 +56,7 @@ flowchart LR
 | `mutation.py` | Seven mutation operators and the architect, which parses LLM output leniently |
 | `evolution.py` | Tournament selection, elitism, an evaluation cache, held-out scoring |
 | `crossover.py` | Role-aligned crossover between two organizations |
-| `stats.py` | Seeded bootstrap confidence intervals for means and paired differences |
+| `stats.py` | Seeded bootstrap intervals, sign-flip permutation p-values and Holm adjustment |
 | `pareto.py` | NSGA-II style ranking on pass rate and cost |
 | `report.py`, `cli.py` | Markdown run report and the `evorg` command |
 | `web/` | FastAPI API and a React lineage explorer for saved runs |
@@ -220,14 +220,17 @@ instructions like "keep functions under 30 lines" drift along because nothing se
 them, and 2 of the 10 champions still carry one.
 
 What is each gene of a champion worth? `evorg ablate` removes or reverts one gene at a time and
-re-scores on the held-out tasks. For the demo champion above, over 30 simulator seeds: switching
-the coder back to the small model costs 20.8 points of pass rate (95% CI 16.7 to 24.7) and saves
-98% of the cost, and dropping "Handle empty input explicitly." costs 16.1 points (95% CI 8.6 to
-23.1). Both are worth keeping. The two other instructions and the retry budget of 3 make no
-clear difference, and the simulator gives those instructions zero weight. With only 10 seeds,
-one of those neutral instructions looked like it was worth 12 points, with a fitness interval
-that excluded zero. With five genes tested at once, one false alarm at 10 seeds is not
-surprising, so use more seeds before trusting a single row.
+re-scores on the held-out tasks. Each row gets a paired sign-flip p-value, Holm-adjusted across
+the rows, and a verdict calls a change real only when that adjusted p is below 0.05. For the demo
+champion above, over 30 simulator seeds: switching the coder back to the small model costs 20.8
+points of pass rate (95% CI 16.7 to 24.7) and saves 98% of the cost, and dropping "Handle empty
+input explicitly." costs 16.1 points (95% CI 8.6 to 23.1). Both are worth keeping. The other two
+instructions and the retry budget of 3 make no clear difference (adjusted p 0.19 on pass rate for
+the neutral instructions), and the simulator gives those instructions zero weight. At 10 seeds the
+same adjustment stops a neutral instruction from being called worth 12 points: its fitness
+interval excluded zero before, and its adjusted fitness p is now 0.06. The "Handle empty" row
+still reads as a real pass-rate cost at 10 seeds, but its fitness change is not clear there
+(adjusted p 0.08), so use 30 seeds before trusting a single row.
 
 ## Limits
 
