@@ -14,9 +14,9 @@ def _all_tests(task: Task) -> list[str]:
 
 
 def test_split_sizes():
-    assert len(load_benchmark("train")) == 8
-    assert len(load_benchmark("holdout")) == 4
-    assert len(ALL_TASKS) == 12
+    assert len(load_benchmark("train")) == 24
+    assert len(load_benchmark("holdout")) == 12
+    assert len(ALL_TASKS) == 36
 
 
 def test_splits_are_labelled_and_ordered():

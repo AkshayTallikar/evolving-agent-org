@@ -1,4 +1,4 @@
-"""The coding benchmark: twelve small Python tasks with visible and hidden tests.
+"""The coding benchmark: thirty-six small Python tasks with visible and hidden tests.
 
 Every task carries a reference solution, at least one obvious buggy solution (fails a
 visible test) and at least one subtle buggy solution (passes every visible test but fails a
@@ -9,24 +9,10 @@ Tests are single-line ``assert`` statements that call the function by name.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-SPLITS = ("train", "holdout", "all")
-
-
-@dataclass(frozen=True)
-class Task:
-    id: str
-    title: str
-    prompt: str  # natural-language spec
-    signature: str  # e.g. "def rle_encode(s: str) -> str:"
-    visible_tests: tuple[str, ...]  # assert statements shown to the organization
-    hidden_tests: tuple[str, ...]  # assert statements used only for scoring
-    reference_solution: str
-    buggy_solutions: tuple[str, ...]
-    difficulty: float  # 0.0 (trivial) .. 3.0 (hard)
-    split: str  # "train" | "holdout"
-
+from evorg.bench.model import SPLITS, Task
+from evorg.bench.tasks_data import DATA_TASKS
+from evorg.bench.tasks_numbers import NUMBER_TASKS
+from evorg.bench.tasks_text import TEXT_TASKS
 
 _FIZZBUZZ = Task(
     id="fizzbuzz_list",
@@ -681,7 +667,7 @@ def is_valid_ipv4(s: str) -> bool:
     split="holdout",
 )
 
-TASKS: tuple[Task, ...] = (
+_CORE_TASKS: tuple[Task, ...] = (
     _FIZZBUZZ,
     _REVERSE_WORDS,
     _IS_PALINDROME,
@@ -695,6 +681,17 @@ TASKS: tuple[Task, ...] = (
     _LONGEST_PREFIX,
     _IS_IPV4,
 )
+
+
+def _ordered(*groups: tuple[Task, ...]) -> tuple[Task, ...]:
+    """Every train task, then every holdout task, each in group order."""
+    tasks = [t for group in groups for t in group]
+    return tuple(t for t in tasks if t.split == "train") + tuple(
+        t for t in tasks if t.split == "holdout"
+    )
+
+
+TASKS: tuple[Task, ...] = _ordered(_CORE_TASKS, TEXT_TASKS, NUMBER_TASKS, DATA_TASKS)
 
 _BY_ID: dict[str, Task] = {t.id: t for t in TASKS}
 

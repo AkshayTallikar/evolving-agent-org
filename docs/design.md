@@ -221,7 +221,10 @@ def get_task(task_id: str) -> Task
 def task_index() -> dict[str, Task]
 ```
 
-Twelve tasks: eight `train`, four `holdout`, a spread of difficulty. Each task has at least
+Thirty-six tasks: 24 `train`, 12 `holdout`, difficulty 0.2 to 1.9. The original twelve live in
+`tasks.py`; `tasks_text.py`, `tasks_numbers.py` and `tasks_data.py` add eight each, and the
+`Task` record sits in `model.py` so those modules don't import `tasks.py`. `TASKS` lists every
+train task before every holdout task. Each task has at least
 two buggy solutions: at least one that fails a visible test, and at least one **subtle**
 bug that passes every visible test but fails a hidden one. The subtle bugs are what make a
 reviewer worth paying for.
@@ -509,6 +512,15 @@ share one budgeted backend. `evorg estimate` runs the simulator through
 * Determinism: two runs with the same seed produce identical `run.json`.
 * An end-to-end test runs a 2-generation evolution on the simulated backend.
 * CI runs lint, tests on Python 3.11 to 3.13, and a smoke run of the CLI.
+
+Comparisons across seeds are reported with uncertainty. `evorg.stats` holds a percentile
+bootstrap: `bootstrap_ci` resamples the per-seed values 2000 times with a fixed seed and
+returns the central 95% of the resampled means, and `paired_bootstrap_ci` does the same for
+the per-seed differences of two arms run on the same seeds. The scripts in `scripts/` print
+each mean with its interval, and each comparison with the paired difference and its interval.
+A difference counts as real only when its interval excludes zero. With 10 seeds and the
+12-task held-out split, the intervals are wide, so most small gaps are reported as within
+noise.
 
 ## 6. Honest limits
 

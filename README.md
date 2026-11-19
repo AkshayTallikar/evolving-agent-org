@@ -19,7 +19,7 @@ evorg treats the organization as a genome and lets selection answer those questi
 - **Structure is searchable.** Roles, instructions, model tiers and retry budgets are all genes.
 - **Fitness is measured, not judged.** Code is graded by running hidden tests, and cost
   counts against fitness (`fitness = pass rate - 10 x mean USD per task`).
-- **Generalization is checked.** Four held-out tasks are never used for selection.
+- **Generalization is checked.** Twelve held-out tasks are never used for selection.
 - **Every change is explained.** Lineage keeps what changed and why the architect proposed it.
 
 ## Architecture
@@ -28,7 +28,7 @@ evorg treats the organization as a genome and lets selection answer those questi
 flowchart LR
     subgraph Generation
         P[Population of org genomes] --> E[Executor]
-        E -->|plan, code, test or review, retry| B[(Benchmark: 8 train tasks)]
+        E -->|plan, code, test or review, retry| B[(Benchmark: 24 train tasks)]
         B -->|hidden tests in a subprocess| G[Grader]
         G --> F[Fitness: pass rate minus cost]
     end
@@ -39,7 +39,7 @@ flowchart LR
     V -->|no| R[Random fallback mutation]
     R --> C
     C --> P
-    F -->|after the last generation| H[(4 held-out tasks)]
+    F -->|after the last generation| H[(12 held-out tasks)]
     H --> Rep[report.md + run.json]
 ```
 
@@ -47,11 +47,12 @@ flowchart LR
 | --- | --- |
 | `genome.py` | Immutable org genome, validation, content-hash id, diffs between genomes |
 | `llm/` | `LLMBackend` protocol, an offline deterministic simulator, and an Anthropic backend |
-| `bench/` | 12 small Python tasks with visible and hidden tests, and a subprocess grader |
+| `bench/` | 36 small Python tasks (24 train, 12 held-out) with visible and hidden tests, and a subprocess grader |
 | `executor.py` | Runs one organization on one task: planners, coder, then tester or reviewer, with retries on feedback |
 | `mutation.py` | Seven mutation operators and the architect, which parses LLM output leniently |
 | `evolution.py` | Tournament selection, elitism, an evaluation cache, held-out scoring |
 | `crossover.py` | Role-aligned crossover between two organizations |
+| `stats.py` | Seeded bootstrap confidence intervals for means and paired differences |
 | `pareto.py` | NSGA-II style ranking on pass rate and cost |
 | `report.py`, `cli.py` | Markdown run report and the `evorg` command |
 | `web/` | FastAPI API and a React lineage explorer for saved runs |
@@ -109,69 +110,93 @@ evorg run --backend anthropic --generations 3 --population 4 --max-usd 5 --yes
 ## Demo
 
 `evorg run --backend sim --generations 8 --population 8 --seed 3` starts from a single coder
-and ends with a four-role team:
+and ends with a coder on the large tier, with two instructions and a retry budget of 3:
 
 ```
 | generation | best fitness | best pass rate |
-| 0          | 0.4996       | 50.0%          |
-| 3          | 0.8502       | 87.5%          |
-| 6          | 0.9768       | 100.0%         |
+| 0          | 0.6490       | 66.7%          |
+| 3          | 0.7323       | 75.0%          |
+| 6          | 0.7323       | 75.0%          |
 
-Best fitness: ▁▃▅▆▆▆███
-Held-out (unseen simulator seed): seed 0.0% -> champion 75.0%
+Best fitness: ▁▁▂██████
+Held-out (unseen simulator seed): seed 0.0% -> champion 66.7%
 ```
 
-The lineage shows how it got there, including a mistake it recovered from:
+The lineage shows how it got there:
 
 ```
-2. generation 1, fitness 0.3590: coder: model -> large.
+1. ed5cc38bd2, generation 0, fitness 0.3746: seed
+2. 906f8b2582, generation 1, fitness 0.6490: coder: model -> large.
    Why: Run the coder role on the large tier to test the trade-off.
-5. generation 4, fitness 0.8502: coder: + instruction 'Handle empty input explicitly.'
-7. generation 6, fitness 0.5938: coder: + instruction 'Be brief and skip unnecessary checks.'
-8. generation 7, fitness 0.9768: + role planner (planner).
-   Why: Add a planner role to see whether it improves the outcome.
+3. a54eb76440, generation 2, fitness 0.6488: coder: + instruction 'Prefer descriptive variable names.'.
+   Why: Try adding guidance to the coder role.
+4. beee637d3d, generation 3, fitness 0.6488: max_retries -> 3.
+   Why: Change the feedback budget to 3 retries.
+5. 5bbe404288, generation 4, fitness 0.7323: coder: + instruction 'Handle empty input explicitly.'.
+   Why: Try adding guidance to the coder role.
 ```
 
-The harmful "be brief" gene hitchhiked into the champion. A planner added in the next
-generation more than made up for it. The champion it saved is in
-[examples/champion_seed3.json](examples/champion_seed3.json).
+Most of the gain came in generation 4, when the explicit empty-input instruction lifted fitness
+from 0.6488 to 0.7323. The retry budget in generation 3 left fitness unchanged. This is one run
+on one simulator seed, so it shows how the search moves, not how much each step is worth. The
+champion it saved is in [examples/champion_seed3.json](examples/champion_seed3.json).
 
 ## Results, honestly
 
 The headline numbers above come from one run. [scripts/robustness.py](scripts/robustness.py)
-re-scores the champions of 10 runs on 20 simulator seeds they never saw:
+re-scores the champions of 10 runs on 20 simulator seeds they never saw. Every mean below has a
+95% percentile bootstrap interval over those seeds or runs ([src/evorg/stats.py](src/evorg/stats.py)).
+The seed genome's interval comes from its 20 scoring seeds, and the champions' intervals come from
+the 10 runs. The "minus seed" rows are paired by run, and a difference counts as real only when its
+interval excludes zero.
 
 |  | train tasks | held-out tasks |
 | --- | --- | --- |
-| seed genome (one coder) | 42.5% | 37.5% |
-| champions, one scoring seed, scored in their own run | 88.8% | - |
-| champions, one scoring seed, scored on fresh noise | 68.0% | 69.4% |
-| champions, `--eval-seeds 3`, scored on fresh noise | **78.2%** | **73.9%** |
+| seed genome (one coder) | 45.8% (95% CI 41.9% to 49.6%) | 30.4% (95% CI 23.3% to 37.1%) |
+| champions, one scoring seed, scored in their own run | 84.6% (95% CI 79.2% to 90.4%) | - |
+| champions, one scoring seed, scored on fresh noise | 75.8% (95% CI 68.8% to 82.4%) | 63.0% (95% CI 54.9% to 71.3%) |
+| champions, `--eval-seeds 3`, scored on fresh noise | **78.7%** (95% CI 70.6% to 86.1%) | **70.0%** (95% CI 59.1% to 80.4%) |
+| champion minus seed, one scoring seed | +29.9% (95% CI +23.0% to +36.6%) | +32.5% (95% CI +24.5% to +40.9%) |
+| champion minus seed, `--eval-seeds 3` | +32.9% (95% CI +24.8% to +40.2%) | +39.6% (95% CI +28.7% to +50.0%) |
 
-Evolution clearly works: champions roughly double the seed's held-out pass rate. With a single
-scoring seed, part of the in-run score is luck, because selection fits that seed's noise.
-Averaging each genome over three simulator seeds (`--eval-seeds 3`) cuts that gap and gives
-champions that hold up better on unseen noise, at three times the evaluation cost.
+Evolution clearly works: champions roughly double the seed's held-out pass rate, and both
+differences in the last two rows exclude zero. With a single scoring seed, part of the in-run
+score is luck. The champions score 84.6% in their own run but 75.8% on fresh noise on the same
+train tasks. Averaging each genome over three simulator seeds (`--eval-seeds 3`) narrows that
+gap to 84.2% against 78.7%, at three times the evaluation cost. The fresh-noise gain from three
+seeds, 2.9 points on train and 7.0 points on held-out, has overlapping intervals, so it is within
+noise.
 
-Crossover (`--crossover-rate`, off by default) fixes a stall but doesn't help held-out tasks
-yet. Over 10 seeds at population 8, mutation-only search stops finding new organizations
-after about 18 distinct genomes. Running it for 24 generations instead of 8 still ends at
-91.2% train. With crossover at rate 0.3, the same 8 generations explore 33 genomes and reach
-100% train. Held-out pass rate stays at 60.0% either way, though four held-out tasks is too
-few to see small differences ([scripts/compare_crossover.py](scripts/compare_crossover.py)).
+Crossover (`--crossover-rate`, off by default) raises train fitness, but it does not show a
+held-out gain yet. Over 10 seeds at population 8, mutation-only search stops
+finding new organizations after about 20 distinct genomes, and that count is flat from
+generation 16 on. Running it for 24 generations instead of 8 still ends at 87.1% train (95% CI
+82.1% to 91.3%) and 66.7% held-out (95% CI 59.2% to 73.3%), from the same seeds (a one-off 24-generation
+variant of the comparison script, not checked in). With crossover
+at rate 0.3, the same 8 generations evaluate 32.1 genomes (95% CI 30.4 to 33.7) and reach 93.8%
+train (95% CI 90.4% to 97.1%). That train gain over mutation-only at 8 generations is real:
++9.2 points (95% CI +4.2 to +14.6). Held-out pass rate is 67.5% (95% CI 61.7% to 73.3%) without
+crossover and 78.3% (95% CI 64.2% to 90.0%) with it. The +10.8 point difference has an interval
+of -2.5 to +22.5, which includes zero, so it is within noise. Crossover scored higher on 7 seeds
+and lower on 2 ([scripts/compare_crossover.py](scripts/compare_crossover.py)).
 
 Pareto selection (`--selection pareto`, off by default) ranks genomes by Pareto front on pass
 rate and cost instead of by fitness. Over 10 seeds at population 8 and 8 generations
-([scripts/compare_selection.py](scripts/compare_selection.py)), its champions cost less but pass
-slightly fewer tasks. Champions' mean cost per held-out task is $0.000215 against $0.000308 with
-scalar selection, about 30% cheaper. Train pass rate is 85.0% against 88.8%, and held-out pass rate is
-57.5% against 60.0%. The final frontier holds 5.6 genomes on average against 5.3. Pareto scored
-higher on 2 seeds and lower on 3, so the held-out difference is within noise. The honest claim is
-a cheaper champion for a small loss in pass rate.
+([scripts/compare_selection.py](scripts/compare_selection.py)), its champions cost less and pass
+fewer tasks, and both losses are real. Champions' mean cost per held-out task is $0.000530
+(95% CI $0.000057 to $0.001210) against $0.001457 (95% CI $0.000745 to $0.002148) with scalar
+selection, a paired difference of -$0.000927 (95% CI -$0.001742 to -$0.000182). Train pass rate
+is 76.2% (95% CI 71.7% to 81.2%) against 84.6% (95% CI 79.2% to 90.4%), a difference of -8.3
+points (95% CI -14.6 to -2.5). Held-out pass rate is 55.8% (95% CI 48.3% to 64.2%) against 67.5%
+(95% CI 61.7% to 73.3%), a difference of -11.7 points (95% CI -21.7 to -1.7). The final frontier
+holds 5.8 genomes on average (95% CI 4.8 to 6.8) against 6.4 (95% CI 5.3 to 7.5), a difference
+that is within noise. Pareto scored higher on 1 seed and lower on 5. The honest claim is a
+cheaper champion for a real loss in pass rate, on train tasks and held-out tasks alike.
 
-Other patterns across seeds: champions almost always add a tester or reviewer and an
-edge-case instruction. Neutral instructions like "keep functions under 30 lines" drift along
-because nothing selects against them.
+Other patterns across seeds: champions do not reliably add a tester or reviewer. Of the 10
+champions, 5 have a tester or reviewer and 5 have an edge-case or empty-input instruction. Neutral
+instructions like "keep functions under 30 lines" drift along because nothing selects against
+them, and 2 of the 10 champions still carry one.
 
 ## Limits
 
@@ -181,7 +206,8 @@ because nothing selects against them.
   milestone 2 experiment.
 - **The grader is not a sandbox.** It runs generated code in an isolated Python subprocess
   with a timeout. Real-model runs should happen in a container.
-- **Twelve tasks is small.** Enough to see selection pressure, not enough to make claims.
+- **Thirty-six tasks is still small.** Enough to see selection pressure and rough differences,
+  not enough for fine-grained claims.
 
 ## How this was built
 
