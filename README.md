@@ -228,14 +228,12 @@ $0.001457 against $0.001427, a difference of -$0.000030 (95% CI -$0.000091 to +$
 genome size is 2.9 against 3.1, a difference of +0.2 (95% CI -0.3 to +0.9). The share of champions
 carrying a neutral instruction is 40% in both arms (4 of 10). The honest conclusion is no clear
 effect: the penalty does not shrink genomes or remove neutral genes at this weight, and its small
-pass-rate cost sits right at zero. A larger W was not tested. The 40% baseline here is higher than
-the "2 of the 10" quoted below, because this comparison uses population 8 and 8 generations
-instead of the defaults, and the defaults give 3 of 10 on the same seeds.
+pass-rate cost sits right at zero. A larger W was not tested.
 
 Other patterns across seeds: champions do not reliably add a tester or reviewer. Of the 10
 champions, 5 have a tester or reviewer and 5 have an edge-case or empty-input instruction. Neutral
 instructions like "keep functions under 30 lines" drift along because nothing selects against
-them, and 2 of the 10 champions still carry one.
+them, and 4 of the 10 champions still carry one.
 
 What is each gene of a champion worth? `evorg ablate` removes or reverts one gene at a time and
 re-scores on the held-out tasks. Each row gets a paired sign-flip p-value, Holm-adjusted across
