@@ -360,6 +360,7 @@ class EvolutionConfig:
     seed: int = 0
     eval_seeds: int = 1
     crossover_rate: float = 0.0     # chance a child is bred by crossover
+    complexity_weight: float = 0.0  # fitness also subtracts this times the genome size (4.15)
 
 @dataclass(frozen=True)
 class Evaluation:
@@ -605,6 +606,22 @@ the backend named `replay-sim:<path>`; the report keys its simulator caveats on 
 well as on `sim`. A replay must use the recorded `--generations`, `--population`, `--seed` and
 `--eval-seeds`; any other settings produce a miss. The replay's default output folder is
 `runs/replay-seed<seed>`, so it never overwrites a simulator run.
+
+### 4.15 Parsimony penalty
+
+`EvolutionConfig.complexity_weight` (`--complexity-weight W`, default 0) adds a size penalty to
+fitness: `fitness = pass_rate - cost_weight * mean_cost - complexity_weight * size`. The size
+is `OrgGenome.size()`, the instructions over all roles plus one for each role beyond the first.
+Pass rate and mean cost are computed as before, so only the ranking changes. With the default
+of 0 the penalty term is exactly zero and every fitness, run and report is unchanged. The
+weight is saved in `run.json` only when it is non-zero, and the run report names it then.
+`evorg ablate` reads it back, so variant fitness matches the run. `W` must be finite and at
+least 0; anything else is refused before the search starts.
+
+The penalty applies to scalar selection through fitness. Pareto selection ranks genomes on pass
+rate and cost only, so under `--selection pareto` the penalty changes the recorded fitness but
+not which genomes survive. `scripts/compare_parsimony.py` compares W = 0 with W = 0.01 over 10
+seeds; the README records the result.
 
 ## 5. Testing strategy
 

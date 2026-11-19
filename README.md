@@ -86,6 +86,9 @@ evorg run --backend sim --generations 8 --population 8 --seed 3 --workers 4
 # Set EVORG_GRADE_CACHE=0 to turn the cache off; results are identical either way.
 EVORG_GRADE_CACHE=0 evorg run --backend sim --generations 8 --population 8 --seed 3
 
+# subtract 0.01 per instruction or extra role from fitness (a parsimony penalty, off by default)
+evorg run --backend sim --generations 8 --population 8 --seed 3 --complexity-weight 0.01
+
 # re-render a saved run
 evorg show runs/sim-seed3
 
@@ -213,6 +216,21 @@ points (95% CI -14.6 to -2.5). Held-out pass rate is 55.8% (95% CI 48.3% to 64.2
 holds 5.8 genomes on average (95% CI 4.8 to 6.8) against 6.4 (95% CI 5.3 to 7.5), a difference
 that is within noise. Pareto scored higher on 1 seed and lower on 5. The honest claim is a
 cheaper champion for a real loss in pass rate, on train tasks and held-out tasks alike.
+
+A parsimony penalty (`--complexity-weight`, off by default) tests whether selecting against
+neutral genes helps. Fitness subtracts W times the genome's instructions and extra roles. At
+W = 0.01, one neutral instruction costs as much as one point of pass rate. Over the same 10 seeds
+at population 8 and 8 generations ([scripts/compare_parsimony.py](scripts/compare_parsimony.py)),
+the penalty does not change the champions much: 8 of 10 are identical with and without it. Held-out
+pass rate is 67.5% (95% CI 61.7% to 73.3%) without the penalty and 65.0% (95% CI 58.3% to 71.7%)
+with it, a difference of -2.5 points (95% CI -6.7 to 0.0). Mean held-out cost per task is
+$0.001457 against $0.001427, a difference of -$0.000030 (95% CI -$0.000091 to +$0.000002). Champion
+genome size is 2.9 against 3.1, a difference of +0.2 (95% CI -0.3 to +0.9). The share of champions
+carrying a neutral instruction is 40% in both arms (4 of 10). The honest conclusion is no clear
+effect: the penalty does not shrink genomes or remove neutral genes at this weight, and its small
+pass-rate cost sits right at zero. A larger W was not tested. The 40% baseline here is higher than
+the "2 of the 10" quoted below, because this comparison uses population 8 and 8 generations
+instead of the defaults, and the defaults give 3 of 10 on the same seeds.
 
 Other patterns across seeds: champions do not reliably add a tester or reviewer. Of the 10
 champions, 5 have a tester or reviewer and 5 have an edge-case or empty-input instruction. Neutral
