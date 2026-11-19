@@ -12,7 +12,7 @@ import json
 import math
 import random
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from evorg.ablation import ablate, champion_and_seed, render_ablation, seed_offsets
@@ -27,6 +27,7 @@ from evorg.evolution import (
 )
 from evorg.genome import OrgGenome
 from evorg.llm import SimulatedBackend, make_backend
+from evorg.llm.base import LLMBackend
 from evorg.llm.budget import (
     BudgetedBackend,
     BudgetExceeded,
@@ -35,6 +36,7 @@ from evorg.llm.budget import (
     UsageTally,
     estimate_upper_bound,
 )
+from evorg.llm.cassette import Cassette, RecordingBackend, ReplayBackend
 from evorg.mutation import Architect
 from evorg.report import render_markdown
 
@@ -65,6 +67,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="hard spending cap in USD, required with --backend anthropic",
+    )
+    cassette = run.add_mutually_exclusive_group()
+    cassette.add_argument(
+        "--record", metavar="FILE", help="also save every model call to a new JSONL cassette"
+    )
+    cassette.add_argument(
+        "--replay",
+        metavar="FILE",
+        help="answer every call from a cassette recorded earlier: no API calls, no cost",
     )
 
     estimate = sub.add_parser(
@@ -176,8 +187,15 @@ def _valid_cap(max_usd: float | None) -> bool:
 
 def _cmd_run(args: argparse.Namespace) -> int:
     config = _config_from_args(args)
-    out = Path(args.out) if args.out else Path("runs") / f"{args.backend}-seed{args.seed}"
+    label = "replay" if args.replay else args.backend
+    out = Path(args.out) if args.out else Path("runs") / f"{label}-seed{args.seed}"
 
+    if args.replay and args.backend != "sim":
+        print("error: --replay answers from a cassette; drop --backend anthropic", file=sys.stderr)
+        return EXIT_USAGE
+    if args.record and Path(args.record).exists():
+        print(f"error: {args.record} exists; choose a new cassette file", file=sys.stderr)
+        return EXIT_USAGE
     if args.backend == "anthropic" and args.eval_seeds > 1:
         print(
             "error: --eval-seeds above 1 needs the simulated backend; repeating paid "
@@ -205,7 +223,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 return EXIT_USAGE
             # One budgeted backend serves both the evaluator and the architect, so every
             # call counts against the same cap.
-            budget = BudgetedBackend(make_backend("anthropic"), args.max_usd)
+            inner = make_backend("anthropic")
+            if args.record:
+                inner = RecordingBackend(inner, args.record)
+            budget = BudgetedBackend(inner, args.max_usd)
             architect = Architect(budget, random.Random(config.seed + 1))
             run = evolve(
                 config,
@@ -215,8 +236,20 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 architect,
                 on_generation=_progress,
             )
+        elif args.replay:
+            cassette_data = Cassette.load(args.replay)
+            print(
+                f"replaying {cassette_data.size} recorded calls from {args.replay}: "
+                "no API calls, no money spent",
+                file=sys.stderr,
+            )
+            run = run_simulated(
+                config,
+                on_generation=_progress,
+                wrap=lambda _inner, stream: ReplayBackend(cassette_data, stream),
+            )
         else:
-            run = run_simulated(config, on_generation=_progress)
+            run = run_simulated(config, on_generation=_progress, wrap=_recorder(args.record))
     except BudgetExceeded as exc:
         print(
             f"stopped: spending cap reached (${exc.spent_usd:.4f} of ${exc.limit_usd:.2f})",
@@ -242,6 +275,17 @@ def _cmd_run(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
     return EXIT_OK
+
+
+def _recorder(path: str | None) -> Callable[[LLMBackend, str], LLMBackend] | None:
+    """A wrap function for ``run_simulated`` that records each simulator stream, or None."""
+    if path is None:
+        return None
+
+    def wrap(inner: LLMBackend, stream: str) -> LLMBackend:
+        return RecordingBackend(inner, path, stream=stream)
+
+    return wrap
 
 
 def _cmd_estimate(args: argparse.Namespace) -> int:
