@@ -171,7 +171,8 @@ Crossover (`--crossover-rate`, off by default) raises train fitness, but it does
 held-out gain yet. Over 10 seeds at population 8, mutation-only search stops
 finding new organizations after about 20 distinct genomes, and that count is flat from
 generation 16 on. Running it for 24 generations instead of 8 still ends at 87.1% train (95% CI
-82.1% to 91.3%) and 66.7% held-out (95% CI 59.2% to 73.3%), from the same seeds. With crossover
+82.1% to 91.3%) and 66.7% held-out (95% CI 59.2% to 73.3%), from the same seeds (a one-off 24-generation
+variant of the comparison script, not checked in). With crossover
 at rate 0.3, the same 8 generations evaluate 32.1 genomes (95% CI 30.4 to 33.7) and reach 93.8%
 train (95% CI 90.4% to 97.1%). That train gain over mutation-only at 8 generations is real:
 +9.2 points (95% CI +4.2 to +14.6). Held-out pass rate is 67.5% (95% CI 61.7% to 73.3%) without
