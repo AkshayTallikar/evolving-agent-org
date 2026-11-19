@@ -19,6 +19,7 @@ from typing import Any
 from evorg import pareto
 from evorg.bench import Task, load_benchmark, task_index
 from evorg.crossover import crossover
+from evorg.diversity import genome_distance, population_diversity, structure_key
 from evorg.executor import TaskResult, run_task
 from evorg.genome import OrgGenome, seed_genome
 from evorg.llm.base import LLMBackend
@@ -33,6 +34,7 @@ HOLDOUT_SEED_OFFSET = 500_000  # holdout seeds sit far above every training seed
 CROSSOVER_PAIR_TRIES = 3  # draws for a second parent that differs from the first
 CROSSOVER_MUTATE_PROB = 0.5  # chance that a crossover child is also mutated
 SELECTION_MODES = ("scalar", "pareto")
+DIVERSITY_MODES = ("none", "crowding")
 
 
 @dataclass(frozen=True)
@@ -49,6 +51,7 @@ class EvolutionConfig:
     selection: str = "scalar"  # "scalar": rank by fitness; "pareto": rank by front, then crowding
     # fitness also subtracts complexity_weight * OrgGenome.size(); 0 turns the penalty off
     complexity_weight: float = 0.0
+    diversity: str = "none"  # "none": plain elitism and tournaments; "crowding": see below
 
 
 @dataclass(frozen=True)
@@ -90,6 +93,8 @@ class GenerationRecord:
     index: int
     members: list[tuple[str, float]]  # (genome_id, fitness), best first
     best_id: str
+    distinct: int = 0  # distinct structures among the members (see diversity.py)
+    mean_distance: float = 0.0  # mean pairwise genome_distance among the members
 
 
 @dataclass
@@ -126,6 +131,8 @@ class RunResult:
                     "index": record.index,
                     "members": [[gid, _r(fitness)] for gid, fitness in record.members],
                     "best_id": record.best_id,
+                    "distinct": record.distinct,
+                    "mean_distance": _r(record.mean_distance),
                 }
                 for record in self.generations
             ],
@@ -154,6 +161,8 @@ def _config_dict(config: EvolutionConfig) -> dict[str, Any]:
     if data["complexity_weight"] == 0:
         # Left out at its default, so runs that do not use the penalty save the same run.json.
         data.pop("complexity_weight")
+    if data["diversity"] == "none":
+        data.pop("diversity")  # same reason: the default leaves the saved config unchanged
     return data
 
 
@@ -325,14 +334,16 @@ def _validate_config(config: EvolutionConfig) -> None:
     if not 0 <= config.crossover_rate <= 1:
         raise ValueError(f"crossover_rate must be between 0 and 1, got {config.crossover_rate}")
     if config.selection not in SELECTION_MODES:
-        raise ValueError(
-            f"selection must be 'scalar' or 'pareto', got {config.selection!r}"
-        )
+        raise ValueError(f"selection must be 'scalar' or 'pareto', got {config.selection!r}")
     if not (math.isfinite(config.complexity_weight) and config.complexity_weight >= 0):
         raise ValueError(
             "complexity_weight must be a finite number of 0 or more, "
             f"got {config.complexity_weight}"
         )
+    if config.diversity not in DIVERSITY_MODES:
+        raise ValueError(f"diversity must be 'none' or 'crowding', got {config.diversity!r}")
+    if config.diversity == "crowding" and config.selection == "pareto":
+        raise ValueError("diversity 'crowding' cannot be combined with selection 'pareto'")
 
 
 def _as_backends(backend: LLMBackend | Sequence[LLMBackend]) -> list[LLMBackend]:
@@ -387,10 +398,13 @@ def evolve(
         # Records report progress by fitness in both modes, so the best-fitness line stays
         # comparable; selection order only drives tournaments and survivors.
         ordered = sorted(members, key=lambda g: _rank_key(evaluations[g.genome_id]))
+        diversity = population_diversity(ordered)
         generation = GenerationRecord(
             index=index,
             members=[(g.genome_id, evaluations[g.genome_id].fitness) for g in ordered],
             best_id=ordered[0].genome_id,
+            distinct=diversity.distinct,
+            mean_distance=diversity.mean_distance,
         )
         generations.append(generation)
         if on_generation is not None:
@@ -429,29 +443,34 @@ def evolve(
     crossovers = 0
     for gen in range(1, config.generations + 1):
         children: list[OrgGenome] = []
+        parent_sets: list[tuple[OrgGenome, ...]] = []
         distinct = len({g.genome_id for g in population}) >= 2
         keys = selection_keys(population, evaluations, config.selection)
         for _ in range(config.population):
-            child, crossed = _make_child(
+            child, crossed, parents = _make_child(
                 population, keys, evaluations, config, architect, rng, distinct
             )
             crossovers += crossed
             child = register(child)
             ensure_evaluated(child)
             children.append(child)
+            parent_sets.append(parents)
 
-        pool: dict[str, OrgGenome] = {}
-        for genome in [*population, *children]:
-            pool.setdefault(genome.genome_id, genome)
-        ranked = sorted_population(list(pool.values()))
+        if config.diversity == "crowding":
+            next_population = _crowding_survivors(population, children, parent_sets, evaluations)
+        else:
+            pool: dict[str, OrgGenome] = {}
+            for genome in [*population, *children]:
+                pool.setdefault(genome.genome_id, genome)
+            ranked = sorted_population(list(pool.values()))
 
-        next_population = ranked[: config.elite]
-        remaining = ranked[config.elite :]
-        remaining_keys = selection_keys(remaining, evaluations, config.selection)
-        while len(next_population) < config.population and remaining:
-            winner = _tournament(remaining, remaining_keys, config.tournament_size, rng)
-            remaining.remove(winner)
-            next_population.append(winner)
+            next_population = ranked[: config.elite]
+            remaining = ranked[config.elite :]
+            remaining_keys = selection_keys(remaining, evaluations, config.selection)
+            while len(next_population) < config.population and remaining:
+                winner = _tournament(remaining, remaining_keys, config.tournament_size, rng)
+                remaining.remove(winner)
+                next_population.append(winner)
         population = sorted_population(next_population)
         record(gen, population)
 
@@ -506,8 +525,8 @@ def _make_child(
     architect: Architect,
     rng: random.Random,
     distinct: bool,
-) -> tuple[OrgGenome, int]:
-    """One child for the next generation, and 1 if it was bred by crossover, else 0.
+) -> tuple[OrgGenome, int, tuple[OrgGenome, ...]]:
+    """One child, 1 if it was bred by crossover else 0, and the parents it was bred from.
 
     With probability ``config.crossover_rate`` (and two distinct genomes to choose from) two
     tournament winners are crossed. Otherwise the child is one mutation of a tournament winner.
@@ -517,9 +536,44 @@ def _make_child(
     if distinct and config.crossover_rate > 0 and rng.random() < config.crossover_rate:
         pair = _crossover_pair(population, keys, config.tournament_size, rng)
         if pair is not None:
-            return _crossover_child(pair, evaluations, architect, rng), 1
+            return _crossover_child(pair, evaluations, architect, rng), 1, pair
     parent = _tournament(population, keys, config.tournament_size, rng)
-    return _mutate(parent, evaluations, architect, rng), 0
+    return _mutate(parent, evaluations, architect, rng), 0, (parent,)
+
+
+def _crowding_survivors(
+    population: Sequence[OrgGenome],
+    children: Sequence[OrgGenome],
+    parent_sets: Sequence[tuple[OrgGenome, ...]],
+    evaluations: dict[str, Evaluation],
+) -> list[OrgGenome]:
+    """Deterministic crowding: each child competes for the slot of the parent it resembles.
+
+    Every member of ``population`` owns one slot. A child is paired with its closest parent by
+    ``genome_distance`` (the closer of the two for a crossover child; ties go to the earlier
+    parent). It takes that slot only if its fitness is strictly higher, so ties keep the
+    parent. A child whose structure is already in the population takes no slot, so the
+    population never holds two identical structures through crowding. Children are processed
+    in the order they were made, and a slot that a child has taken is compared against later
+    children, so the outcome depends only on the inputs. The population size never changes.
+    """
+    slot_of = {genome.genome_id: i for i, genome in enumerate(population)}
+    occupants = list(population)
+    present = {structure_key(genome) for genome in occupants}
+    for child, parents in zip(children, parent_sets, strict=True):
+        if structure_key(child) in present:
+            continue
+        closest = min(
+            parents,
+            key=lambda parent: (genome_distance(child, parent), slot_of[parent.genome_id]),
+        )
+        slot = slot_of[closest.genome_id]
+        occupant = occupants[slot]
+        if evaluations[child.genome_id].fitness > evaluations[occupant.genome_id].fitness:
+            present.discard(structure_key(occupant))
+            present.add(structure_key(child))
+            occupants[slot] = child
+    return occupants
 
 
 def _crossover_pair(
@@ -572,9 +626,7 @@ def _mutate(
     return _mutated(parent, evaluations[parent.genome_id].report(), architect, rng)
 
 
-def _mutated(
-    genome: OrgGenome, report: str, architect: Architect, rng: random.Random
-) -> OrgGenome:
+def _mutated(genome: OrgGenome, report: str, architect: Architect, rng: random.Random) -> OrgGenome:
     """``genome`` with the architect's proposal applied, or a random mutation if that fails."""
     proposal = architect.propose(genome, report, n=1)[0]
     try:

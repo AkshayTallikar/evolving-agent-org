@@ -89,6 +89,10 @@ EVORG_GRADE_CACHE=0 evorg run --backend sim --generations 8 --population 8 --see
 # subtract 0.01 per instruction or extra role from fitness (a parsimony penalty, off by default)
 evorg run --backend sim --generations 8 --population 8 --seed 3 --complexity-weight 0.01
 
+# keep the population diverse: a child replaces its most similar parent only if it is fitter
+# (off by default; cannot be combined with --selection pareto)
+evorg run --backend sim --generations 8 --population 8 --seed 3 --diversity crowding
+
 # re-render a saved run
 evorg show runs/sim-seed3
 
@@ -229,6 +233,22 @@ genome size is 2.9 against 3.1, a difference of +0.2 (95% CI -0.3 to +0.9). The 
 carrying a neutral instruction is 40% in both arms (4 of 10). The honest conclusion is no clear
 effect: the penalty does not shrink genomes or remove neutral genes at this weight, and its small
 pass-rate cost sits right at zero. A larger W was not tested.
+
+Diversity pressure (`--diversity crowding`, off by default) is deterministic crowding. Each child
+is paired with the parent it is structurally closest to
+([src/evorg/diversity.py](src/evorg/diversity.py)), and it takes that parent's slot only if it is
+fitter. Over the same 10 seeds at population 8 and 8 generations
+([scripts/compare_diversity.py](scripts/compare_diversity.py)), it shows no clear gain. Held-out
+pass rate is 66.7% (95% CI 58.3% to 75.0%) against 67.5% (95% CI 61.7% to 73.3%) without it, a
+paired difference of -0.8 points (95% CI -9.2 to +7.5). Champions' held-out mean cost is $0.001059
+against $0.001457, a difference of -$0.000398 (95% CI -$0.001348 to +$0.000607), within noise. The
+final population's mean pairwise distance is 0.348 (95% CI 0.311 to 0.387) against 0.382 (95% CI
+0.330 to 0.430), a difference of -0.034 (95% CI -0.076 to +0.019), so crowding does not keep the
+population more spread out either. The convergence this was meant to fix does not show at this
+scale. Both arms keep 8 distinct structures in every generation. Repeats come from re-finding old
+genomes rather than from copies filling the population: about 10 of the 64 child slots per run
+produced a genome not seen before, so most children re-score genomes already evaluated. The flag
+stays off by default.
 
 Other patterns across seeds: champions do not reliably add a tester or reviewer. Of the 10
 champions, 5 have a tester or reviewer and 5 have an edge-case or empty-input instruction. Neutral

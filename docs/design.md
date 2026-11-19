@@ -623,6 +623,35 @@ rate and cost only, so under `--selection pareto` the penalty changes the record
 not which genomes survive. `scripts/compare_parsimony.py` compares W = 0 with W = 0.01 over 10
 seeds; the README records the result.
 
+### 4.16 `evorg.diversity`
+
+`genome_distance(a, b) -> float` is a structural distance in [0, 1] between two genomes. It is
+the mean of four components. Roles: Jaccard distance between the sets of (name, kind) pairs.
+Instructions: per role name in either genome, Jaccard distance between the two instruction sets,
+or 1 when the role is in only one genome. Models: per role name, 0 for the same tier, 1 otherwise
+or when the role is missing. Retries: the absolute difference divided by `MAX_RETRIES`. Ids,
+generation, parent ids, notes, and the order of roles and instructions are ignored. The metric
+is symmetric, and it is 0 exactly when two genomes have the same `structure_key`. No triangle
+inequality is claimed.
+
+`population_diversity(genomes) -> PopulationDiversity(distinct, mean_distance)` counts distinct
+structure keys and averages `genome_distance` over all unordered pairs (0 for fewer than two).
+`evolve` records both per generation in `GenerationRecord` (`distinct`, `mean_distance`), and
+`run.json` holds them in each entry of `generations`.
+
+`EvolutionConfig.diversity` is `"none"` (default, left out of the saved config) or `"crowding"`. With `"none"` the loop is
+unchanged: elitism and tournaments pick the next population. With `"crowding"` the next
+population is built by deterministic crowding (`_crowding_survivors`). Each child is paired with
+its closest parent by `genome_distance`; for a crossover child, the closer of its two parents
+(ties go to the earlier one). The child takes that parent's slot only if its training fitness is
+strictly higher, so ties keep the parent. A child whose structure is already in the population
+takes no slot. Children are processed in the order they were made, and a slot taken by one child
+is compared against later children. The population size stays the same, and no rng is drawn.
+Because a slot never loses fitness, the best genome is kept without the elite, so `elite` has no
+effect in this mode. `selection="pareto"` with `"crowding"` raises `ValueError`. Results are the
+same for any `workers`. `scripts/compare_diversity.py` compares the two modes over 10 seeds.
+
+
 ## 5. Testing strategy
 
 * Unit tests per module, no network, no API key.
