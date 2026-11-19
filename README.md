@@ -219,12 +219,22 @@ champions, 5 have a tester or reviewer and 5 have an edge-case or empty-input in
 instructions like "keep functions under 30 lines" drift along because nothing selects against
 them, and 2 of the 10 champions still carry one.
 
+What is each gene of a champion worth? `evorg ablate` removes or reverts one gene at a time and
+re-scores on the held-out tasks. For the demo champion above, over 30 simulator seeds: switching
+the coder back to the small model costs 20.8 points of pass rate (95% CI 16.7 to 24.7) and saves
+98% of the cost, and dropping "Handle empty input explicitly." costs 16.1 points (95% CI 8.6 to
+23.1). Both are worth keeping. The two other instructions and the retry budget of 3 make no
+clear difference, and the simulator gives those instructions zero weight. With only 10 seeds,
+one of those neutral instructions looked like it was worth 12 points, with a fitness interval
+that excluded zero. With five genes tested at once, one false alarm at 10 seeds is not
+surprising, so use more seeds before trusting a single row.
+
 ## Limits
 
 - **The simulator is a hand-written capability model, not an LLM.** It rewards features chosen
   by hand (a tester, edge-case instructions, the large model). It shows that selection, mutation
   and bookkeeping work end to end. It says nothing about how real models behave. That is the
-  milestone 2 experiment.
+  real-model experiment in #10.
 - **The grader is not a sandbox.** It runs generated code in an isolated Python subprocess
   with a timeout. Real-model runs should happen in a container.
 - **Thirty-six tasks is still small.** Enough to see selection pressure and rough differences,
@@ -237,6 +247,8 @@ Every module landed as its own issue and pull request, merged only after CI pass
 Python 3.11, 3.12 and 3.13. See the
 [closed pull requests](https://github.com/AkshayTallikar/evolving-agent-org/pulls?q=is%3Apr+is%3Aclosed).
 
-## Roadmap (milestone 2)
+## Roadmap
 
-- [#10](https://github.com/AkshayTallikar/evolving-agent-org/issues/10) Evolve on real models
+- [#10](https://github.com/AkshayTallikar/evolving-agent-org/issues/10) Evolve on real models.
+  Record the paid run once with `--record`, then re-report and re-check it from the cassette
+  for free.
