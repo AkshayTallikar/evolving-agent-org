@@ -170,22 +170,30 @@ def test_champion_and_seed_reads_run_dict_and_refuses_paid_backend():
         champion_and_seed(data)
 
 
-def _row(name: str, pass_mean: float, fitness_mean: float) -> AblationRow:
-    genome = seed_genome()
+def _row(name: str, pass_mean: float, fitness_mean: float, p: float = 0.01) -> AblationRow:
+    pass_rate = Delta(pass_mean, pass_mean - 0.04, pass_mean + 0.04)
+    cost = Delta(-0.0002, -0.0003, -0.0001)
+    fitness = Delta(fitness_mean, fitness_mean - 0.01, fitness_mean + 0.01)
     return AblationRow(
         variant=Variant(
-            name=f"role:{name}", kind="role", label=f"removing the {name}", genome=genome
+            name=f"role:{name}", kind="role", label=f"removing the {name}", genome=seed_genome()
         ),
-        pass_rate=Delta(pass_mean, pass_mean - 0.04, pass_mean + 0.04),
-        cost=Delta(-0.0002, -0.0003, -0.0001),
-        fitness=Delta(fitness_mean, fitness_mean - 0.01, fitness_mean + 0.01),
+        pass_rate=pass_rate,
+        cost=cost,
+        fitness=fitness,
         verdict=ablation._verdict(
             f"removing the {name}",
-            Delta(pass_mean, pass_mean - 0.04, pass_mean + 0.04),
-            Delta(-0.0002, -0.0003, -0.0001),
-            Delta(fitness_mean, fitness_mean - 0.01, fitness_mean + 0.01),
+            pass_rate,
+            cost,
+            fitness,
             0.001,
+            pass_p=p,
+            cost_p=p,
+            fitness_p=p,
         ),
+        pass_p=p,
+        cost_p=p,
+        fitness_p=p,
     )
 
 
@@ -211,6 +219,7 @@ def test_render_markdown_has_table_verdicts_and_skipped_section():
     assert text.startswith("# evorg ablation")
     assert "| gene | pass rate change |" in text
     assert "| role:reviewer |" in text
+    assert "adjusted p (fitness)" in text
     assert "Removing the reviewer costs 12 points of pass rate (95% CI" in text
     assert "saves 20% cost" in text
     assert "Keeping it is worth its cost" in text
@@ -219,6 +228,24 @@ def test_render_markdown_has_table_verdicts_and_skipped_section():
     assert "## Skipped variants" in text
     assert "role:coder: removing the coder, skipped because" in text
     assert "simulated backend" in text
+
+
+def test_verdict_calls_change_real_only_below_adjusted_alpha():
+    pass_rate = Delta(-0.12, -0.16, -0.08)
+    cost = Delta(-0.0002, -0.0003, -0.0001)
+    fitness = Delta(-0.2, -0.21, -0.19)
+    real = ablation._verdict(
+        "removing x", pass_rate, cost, fitness, 0.001, pass_p=0.01, cost_p=0.01, fitness_p=0.01
+    )
+    assert "costs 12 points" in real
+    assert "Keeping it is worth its cost" in real
+
+    unclear = ablation._verdict(
+        "removing x", pass_rate, cost, fitness, 0.001, pass_p=0.3, cost_p=0.3, fitness_p=0.3
+    )
+    assert "costs" not in unclear and "saves" not in unclear
+    assert "not clear from these seeds" in unclear
+    assert "Keeping it is worth its cost" not in unclear
 
 
 def test_render_without_variants_says_so():
@@ -271,3 +298,9 @@ def test_cli_ablate_missing_run_returns_1(tmp_path, capsys):
 def test_cli_ablate_rejects_zero_seeds(tmp_path, capsys):
     assert main(["ablate", str(tmp_path), "--seeds", "0"]) == 2
     assert "--seeds" in capsys.readouterr().err
+
+
+def test_zero_variance_family_gets_p_one_without_crashing():
+    same = [0.5, 0.5, 0.25, 0.75]
+    assert ablation._raw_p(same, same) == 1.0
+    assert ablation._raw_p([1.0] * 12, [1.0] * 12) == 1.0

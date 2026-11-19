@@ -4,7 +4,9 @@ A gene is one part of the champion that can be taken away: a role, an instructio
 above ``small``, or a retry budget above the seed's. Each variant is the champion with one gene
 removed or reverted. The champion and every variant are scored on the same tasks and the same
 simulator seeds, so the differences are paired. Pass rate and cost are paired by (seed, task);
-fitness is paired by seed. Every interval is a paired bootstrap at 95%.
+fitness is paired by seed. Every interval is a paired bootstrap at 95%. Every p-value is a
+paired sign-flip permutation test on the same pairs, Holm-adjusted across the rows of one
+ablation, and a verdict calls a change real only when its adjusted p is below ``ALPHA``.
 
 Nothing here touches the disk or calls a paid API. ``ablate`` is deterministic given its inputs.
 """
@@ -20,10 +22,13 @@ from evorg.evolution import HOLDOUT_SEED_OFFSET, TRAIN_SEED_STEP, Evaluation, ev
 from evorg.genome import GenomeError, OrgGenome
 from evorg.llm.simulated import SimulatedBackend
 from evorg.report import SIM_NOTE
-from evorg.stats import paired_bootstrap_ci
+from evorg.stats import holm_adjust, paired_bootstrap_ci, paired_permutation_p
 
 CI_LEVEL = 0.95
 CI_BOOTSTRAP_SEED = 0  # fixed, so the same runs always print the same intervals
+ALPHA = 0.05  # a change is called real only when its Holm-adjusted p is below this
+PERMUTATION_SEED = 0  # fixed, so the same runs always print the same p-values
+PERMUTATION_REPS = 2000  # used only when a family has more pairs than the exact limit
 SMALL_TIER = "small"
 
 
@@ -62,6 +67,9 @@ class AblationRow:
     cost: Delta  # USD per task
     fitness: Delta
     verdict: str
+    pass_p: float = 1.0  # Holm-adjusted sign-flip p, pass rate paired by (seed, task)
+    cost_p: float = 1.0  # Holm-adjusted sign-flip p, cost paired by (seed, task)
+    fitness_p: float = 1.0  # Holm-adjusted sign-flip p, fitness paired by seed
 
 
 @dataclass(frozen=True)
@@ -179,6 +187,15 @@ def _interval(a: Sequence[float], b: Sequence[float]) -> Delta:
     return Delta(mean=statistics.fmean(diffs), low=low, high=high)
 
 
+def _raw_p(a: Sequence[float], b: Sequence[float]) -> float:
+    """Unadjusted two-sided sign-flip p-value; constant or identical arms give 1."""
+    return paired_permutation_p(a, b, reps=PERMUTATION_REPS, seed=PERMUTATION_SEED)
+
+
+def _fmt_p(p: float) -> str:
+    return "<0.001" if p < 0.001 else f"{p:.3f}"
+
+
 def _pass_values(ev: Sequence[Evaluation]) -> list[float]:
     return [1.0 if r.passed else 0.0 for e in ev for r in e.results]
 
@@ -191,37 +208,53 @@ def _fitness_values(ev: Sequence[Evaluation]) -> list[float]:
     return [e.fitness for e in ev]
 
 
-def _verdict(label: str, pass_rate: Delta, cost: Delta, fitness: Delta, champ_cost: float) -> str:
+def _verdict(
+    label: str,
+    pass_rate: Delta,
+    cost: Delta,
+    fitness: Delta,
+    champ_cost: float,
+    *,
+    pass_p: float = 1.0,
+    cost_p: float = 1.0,
+    fitness_p: float = 1.0,
+) -> str:
+    """One sentence per metric. A change is called real only when its adjusted p is below ALPHA.
+
+    The p-values are Holm-adjusted across the rows of the ablation, so they already allow for
+    testing many genes at once. Anything else is reported as not clear from these seeds.
+    """
     points = pass_rate.mean * 100
-    crosses_zero = pass_rate.low <= 0 <= pass_rate.high
     if round(abs(points)) == 0:
         pass_clause = "leaves pass rate about unchanged"
     else:
-        verb = (
-            ("may cost" if points < 0 else "may add")
-            if crosses_zero
-            else ("costs" if points < 0 else "adds")
+        detail = (
+            f"(95% CI {pass_rate.low * 100:.0f} to {pass_rate.high * 100:.0f}, "
+            f"adjusted p {_fmt_p(pass_p)})"
         )
-        pass_clause = f"{verb} {abs(points):.0f} points of pass rate"
-        pass_clause += f" (95% CI {pass_rate.low * 100:.0f} to {pass_rate.high * 100:.0f})"
+        if pass_p < ALPHA:
+            verb = "costs" if points < 0 else "adds"
+            pass_clause = f"{verb} {abs(points):.0f} points of pass rate {detail}"
+        else:
+            pass_clause = (
+                f"moves pass rate by {abs(points):.0f} points, not clear from these seeds {detail}"
+            )
 
-    cost_crosses_zero = cost.low <= 0 <= cost.high
     if champ_cost > 0:
         pct = cost.mean / champ_cost * 100
         if round(abs(pct)) == 0:
             cost_clause = "leaves cost about unchanged"
-        elif cost_crosses_zero:
-            cost_clause = f"{'may save' if pct < 0 else 'may add'} {abs(pct):.0f}% cost"
-        elif pct < 0:
-            cost_clause = f"saves {abs(pct):.0f}% cost"
+        elif cost_p < ALPHA:
+            verb = "saves" if pct < 0 else "adds"
+            cost_clause = f"{verb} {abs(pct):.0f}% cost (adjusted p {_fmt_p(cost_p)})"
         else:
-            cost_clause = f"adds {pct:.0f}% cost"
+            cost_clause = f"changes cost by {pct:+.0f}%, not clear from these seeds"
     else:
-        cost_clause = "changes cost by " + f"${cost.mean:+.6f} per task"
+        cost_clause = "cost change is not clear from these seeds"
 
-    if fitness.high < 0:
+    if fitness_p < ALPHA and fitness.mean < 0:
         tail = "Keeping it is worth its cost: fitness drops without it."
-    elif fitness.low > 0:
+    elif fitness_p < ALPHA and fitness.mean > 0:
         tail = "Fitness rises without it, so it does not earn its cost."
     else:
         tail = "The fitness change is not clear from these seeds."
@@ -255,15 +288,54 @@ def ablate(
         ]
 
     champ_evs = score(champion)
-    rows: list[AblationRow] = []
+    champ_pass = _pass_values(champ_evs)
+    champ_costs = _cost_values(champ_evs)
+    champ_fitness = _fitness_values(champ_evs)
+    champ_cost = statistics.fmean(champ_costs)
+
+    measured = []
     for variant in variants:
         evs = score(variant.genome)
-        pass_rate = _interval(_pass_values(evs), _pass_values(champ_evs))
-        cost = _interval(_cost_values(evs), _cost_values(champ_evs))
-        fitness = _interval(_fitness_values(evs), _fitness_values(champ_evs))
-        champ_cost = statistics.fmean(_cost_values(champ_evs))
-        verdict = _verdict(variant.label, pass_rate, cost, fitness, champ_cost)
-        rows.append(AblationRow(variant, pass_rate, cost, fitness, verdict))
+        measured.append(
+            (
+                variant,
+                _interval(_pass_values(evs), champ_pass),
+                _interval(_cost_values(evs), champ_costs),
+                _interval(_fitness_values(evs), champ_fitness),
+                _raw_p(_pass_values(evs), champ_pass),
+                _raw_p(_cost_values(evs), champ_costs),
+                _raw_p(_fitness_values(evs), champ_fitness),
+            )
+        )
+    # One Holm family per metric, across the rows of this ablation.
+    pass_adj = holm_adjust([m[4] for m in measured])
+    cost_adj = holm_adjust([m[5] for m in measured])
+    fitness_adj = holm_adjust([m[6] for m in measured])
+
+    rows: list[AblationRow] = []
+    for i, (variant, pass_rate, cost, fitness, _, _, _) in enumerate(measured):
+        verdict = _verdict(
+            variant.label,
+            pass_rate,
+            cost,
+            fitness,
+            champ_cost,
+            pass_p=pass_adj[i],
+            cost_p=cost_adj[i],
+            fitness_p=fitness_adj[i],
+        )
+        rows.append(
+            AblationRow(
+                variant,
+                pass_rate,
+                cost,
+                fitness,
+                verdict,
+                pass_p=pass_adj[i],
+                cost_p=cost_adj[i],
+                fitness_p=fitness_adj[i],
+            )
+        )
     rows.sort(key=lambda r: (r.fitness.mean, r.variant.name))
 
     return AblationResult(
@@ -313,16 +385,29 @@ def render_ablation(result: AblationResult) -> str:
         "",
         "## Gene values",
         "",
-        "| gene | pass rate change | cost change per task (USD) | fitness change | verdict |",
-        "| --- | --- | --- | --- | --- |",
+        (
+            "| gene | pass rate change | cost change per task (USD) | fitness change | "
+            "adjusted p (fitness) | verdict |"
+        ),
+        "| --- | --- | --- | --- | --- | --- |",
     ]
     for row in result.rows:
         lines.append(
             f"| {row.variant.name} | {_signed_pts(row.pass_rate)} | "
-            f"{_signed_usd(row.cost)} | {_signed_fitness(row.fitness)} | {row.verdict} |"
+            f"{_signed_usd(row.cost)} | {_signed_fitness(row.fitness)} | "
+            f"{_fmt_p(row.fitness_p)} | {row.verdict} |"
         )
     if not result.rows:
-        lines.append("| (none) | | | | the champion has no genes to ablate |")
+        lines.append("| (none) | | | | | the champion has no genes to ablate |")
+    lines += [
+        "",
+        (
+            "Adjusted p is a two-sided sign-flip permutation p-value on the paired differences, "
+            "Holm-Bonferroni adjusted across the rows of this table so that testing many genes at "
+            "once does not inflate false alarms, and a change is called real only when it is below "
+            "0.05; otherwise the verdict says the change is not clear from these seeds."
+        ),
+    ]
 
     lines += ["", "## Skipped variants", ""]
     if result.skipped:
