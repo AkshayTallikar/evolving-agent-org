@@ -1,4 +1,7 @@
-"""Percentile bootstrap confidence intervals for means over seeds (standard library only)."""
+"""Percentile bootstrap intervals, sign-flip permutation tests and Holm adjustment over seeds.
+
+Standard library only.
+"""
 
 from __future__ import annotations
 
@@ -55,3 +58,69 @@ def paired_bootstrap_ci(
     return bootstrap_ci(
         [x - y for x, y in zip(a, b, strict=True)], reps=reps, level=level, seed=seed
     )
+
+
+EXACT_MAX_N = 16  # enumerate all 2**n sign patterns up to this many pairs
+
+
+def paired_permutation_p(
+    a: Sequence[float], b: Sequence[float], *, reps: int = 10000, seed: int = 0
+) -> float:
+    """Two-sided sign-flip permutation p-value for mean(a - b) = 0.
+
+    Under the null, each paired difference is equally likely to have either sign. The p-value
+    is the share of sign patterns whose mean difference is at least as far from zero as the
+    observed one. With at most ``EXACT_MAX_N`` pairs every pattern is enumerated, so the answer
+    is exact. Otherwise ``reps`` patterns are drawn with a ``random.Random`` seeded with
+    ``seed``, and the count gets the usual +1 correction, so p is never 0. Identical arms, or
+    differences that are all zero, give p = 1.
+    """
+    if len(a) != len(b):
+        raise ValueError(f"paired samples differ in length: {len(a)} and {len(b)}")
+    if len(a) == 0:
+        raise ValueError("paired_permutation_p needs at least one pair")
+    if reps < 1:
+        raise ValueError("reps must be at least 1")
+    diffs = [float(x) - float(y) for x, y in zip(a, b, strict=True)]
+    scale = max(abs(d) for d in diffs)
+    if scale == 0:
+        return 1.0
+    tol = 1e-9 * scale  # sums of the same magnitudes can differ in the last bits
+    n = len(diffs)
+    observed = abs(math.fsum(diffs)) / n
+
+    if n <= EXACT_MAX_N:
+        total = 0
+        for pattern in range(1 << n):
+            signed = [-d if (pattern >> i) & 1 else d for i, d in enumerate(diffs)]
+            if abs(math.fsum(signed)) / n >= observed - tol:
+                total += 1
+        return total / (1 << n)
+
+    rng = random.Random(seed)
+    extreme = 0
+    for _ in range(reps):
+        signed = [d if rng.random() < 0.5 else -d for d in diffs]
+        if abs(math.fsum(signed)) / n >= observed - tol:
+            extreme += 1
+    return (extreme + 1) / (reps + 1)
+
+
+def holm_adjust(pvalues: Sequence[float]) -> list[float]:
+    """Holm-Bonferroni adjusted p-values, returned in the input order.
+
+    Sort the p-values ascending; the j-th smallest (1-based) is multiplied by m - j + 1, where
+    m is the number of p-values, then a running maximum keeps the adjusted values monotone in
+    the sorted order. Every value is capped at 1. An adjusted value is never below its raw one.
+    """
+    m = len(pvalues)
+    for p in pvalues:
+        if not 0 <= p <= 1:
+            raise ValueError(f"p-value must be between 0 and 1, got {p}")
+    order = sorted(range(m), key=lambda i: pvalues[i])
+    adjusted = [0.0] * m
+    running = 0.0
+    for rank, i in enumerate(order):
+        running = max(running, min(1.0, (m - rank) * pvalues[i]))
+        adjusted[i] = running
+    return adjusted
